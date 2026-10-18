@@ -319,6 +319,15 @@ class Agent(
         changed()
     }
 
+    /** Le détecteur d'obstacles vient d'arrêter le drone. */
+    fun obstacleStop(ttcS: Double) {
+        pending = null
+        lastText = "Obstacle devant : arrêt"
+        system("Détecteur d'obstacles : quelque chose approche devant (contact estimé dans %.1f s), déplacement arrêté.".format(ttcS))
+        synchronized(history) { history.add("le détecteur d'obstacles a arrêté le drone : obstacle devant") }
+        speak("Obstacle devant moi, je me suis arrêté.")
+    }
+
     fun linkLost() {
         paused = true
         pending = null
@@ -352,7 +361,7 @@ class Agent(
             "PAUSE : tu ne peux pas bouger (action \"none\" uniquement). Réponds au pilote. " +
                 "S'il veut que tu bouges, dis-lui d'appuyer sur le bouton IA pour te laisser piloter."
         } else {
-            "ACTIF : tu peux agir."
+            "ACTIF : tu peux agir. Déplacement max par action : %.1f m.".format(drone.limits.maxStepM)
         }
         if (!paused && confirm) {
             t += " Mode validation : chaque déplacement est soumis au pilote avant exécution ; " +

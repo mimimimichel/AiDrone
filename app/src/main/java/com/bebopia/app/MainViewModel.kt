@@ -14,6 +14,10 @@ import com.bebopia.app.android.LiveState
 import com.bebopia.app.android.VoiceState
 import com.bebopia.app.android.NetworkRouter
 import com.bebopia.app.android.PreviewEyes
+import com.bebopia.app.android.PreviewGray
+import com.bebopia.app.android.TextureGray
+import com.bebopia.app.core.vision.GrayFrames
+import com.bebopia.app.core.vision.ObstacleGuard
 import com.bebopia.app.android.TextureEyes
 import com.bebopia.app.android.VoiceIO
 import com.bebopia.app.core.DroneBase
@@ -66,6 +70,10 @@ data class UiState(
     val hasGeminiKey: Boolean = false,
     val hasClaudeKey: Boolean = false,
     val bargeIn: Boolean = true,
+    val maxStep: Double = 1.0,
+    val guardOn: Boolean = true,
+    val guardWatching: Boolean = false,
+    val obstacle: Boolean = false,
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -82,6 +90,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         get() = prefs.getBoolean("barge_in", true)
         private set(v) = prefs.edit().putBoolean("barge_in", v).apply()
     private val useLive get() = geminiKey.isNotBlank()
+    /** Distance max par action, réglable de 0,2 à 1 m. */
+    var maxStep: Double
+        get() = prefs.getFloat("max_step", 1.0f).toDouble().coerceIn(0.2, 1.0)
+        private set(v) = prefs.edit().putFloat("max_step", v.coerceIn(0.2, 1.0).toFloat()).apply()
+    var guardOn: Boolean
+        get() = prefs.getBoolean("guard", true)
+        private set(v) = prefs.edit().putBoolean("guard", v).apply()
     var model: String
         get() = prefs.getString("model", DEFAULT_MODEL) ?: DEFAULT_MODEL
         private set(v) = prefs.edit().putString("model", v.trim().ifEmpty { DEFAULT_MODEL }).apply()
@@ -92,7 +107,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         get() = prefs.getBoolean("speak", true)
         private set(v) = prefs.edit().putBoolean("speak", v).apply()
 
-    private val limits = Limits()
+    private val limits = Limits().also { it.maxStepM = maxStep }
+    @Volatile private var guard: ObstacleGuard? = null
+    @Volatile private var obstacleAt = 0L
     private val router = NetworkRouter(app).also { it.start() }
     @Volatile private var listening = false
     @Volatile private var voiceLabel = ""
@@ -194,7 +211,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             hasGeminiKey = geminiKey.isNotBlank(),
             hasClaudeKey = apiKey.isNotBlank(),
             bargeIn = bargeIn,
+            maxStep = limits.maxStepM,
+            guardOn = guardOn,
+            guardWatching = guard?.watching ?: false,
+            obstacle = System.currentTimeMillis() - obstacleAt < 3000,
         )
+    }
+
+    private fun startGuard(d: DroneBase, a: Agent, frames: GrayFrames) {
+        guard?.stop()
+        guard = ObstacleGuard(d, frames, enabled = { guardOn }, onObstacle = { ttc ->
+            obstacleAt = System.currentTimeMillis()
+            a.obstacleStop(ttc)
+        }, log = ::log).also { it.start() }
     }
 
     private fun makeAgent(d: DroneBase, eyes: Eyes): Agent {
@@ -232,6 +261,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 v.start()
                 val a = makeAgent(d, TextureEyes({ textureView }, { v.hasRecentFrame }))
                 d.onLinkLost = { a.linkLost() }
+                startGuard(d, a, TextureGray({ textureView }, { v.hasRecentFrame }))
                 drone = d
                 video = v
                 agent = a
@@ -255,6 +285,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val d = SimDrone(limits, ::log)
         d.connect()
         val a = makeAgent(d, PreviewEyes { previewView })
+        startGuard(d, a, PreviewGray { previewView })
         drone = d
         agent = a
         mode = Mode.SIM
@@ -265,6 +296,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun disconnect() {
         stopLive()
+        guard?.stop()
+        guard = null
         val a = agent
         val d = drone
         val v = video
@@ -373,7 +406,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         val where = if (mode == Mode.SIM) "Simulation : tu vois par la caméra du téléphone, rien ne vole." else "Tu es connecté au vrai Bebop."
         val how = if (a.paused) "Tu es en pause : tu peux parler mais pas bouger." else "Tu peux piloter."
-        val check = if (a.confirm) " Chaque déplacement doit être validé par le pilote." else ""
+        val check = (if (a.confirm) " Chaque déplacement doit être validé par le pilote." else "") +
+            " Distance max par action : %.1f m.".format(limits.maxStepM)
         l.event("Début de la conversation. $where $how$check Salue le pilote en une phrase courte.", true)
         a.addChat(Role.SYSTEM, "Conversation ouverte : parle normalement, tu peux couper la parole au drone. Réappuie sur 🎤 pour la fermer.")
     }
@@ -387,8 +421,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
-    fun saveSettings(key: String, gemini: String, model: String, confirm: Boolean, speak: Boolean, bargeIn: Boolean) {
+    fun saveSettings(
+        key: String, gemini: String, model: String, confirm: Boolean, speak: Boolean, bargeIn: Boolean,
+        maxStep: Double, guardOn: Boolean,
+    ) {
         val wasLive = useLive
+        val stepChanged = Math.abs(maxStep - limits.maxStepM) > 0.01
+        this.maxStep = maxStep
+        limits.maxStepM = this.maxStep
+        this.guardOn = guardOn
+        if (stepChanged) {
+            live?.takeIf { it.active }?.event("Le pilote a réglé la distance max par action à %.1f m.".format(limits.maxStepM), false)
+        }
         if (key.isNotBlank()) apiKey = key
         if (gemini.isNotBlank()) geminiKey = gemini
         this.bargeIn = bargeIn

@@ -45,6 +45,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -165,6 +166,23 @@ fun MainScreen(vm: MainViewModel) {
                         .background(Color(0xAA000000), RoundedCornerShape(6.dp))
                         .padding(horizontal = 8.dp, vertical = 3.dp),
                 )
+                if (s.obstacle) {
+                    Text(
+                        "⚠ OBSTACLE : arrêt",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .background(Danger, RoundedCornerShape(8.dp))
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                    )
+                } else if (s.guardWatching) {
+                    Text(
+                        "🛡",
+                        fontSize = 16.sp,
+                        modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
+                    )
+                }
                 if (s.mode == Mode.BEBOP && !s.hasVideo) {
                     Text("En attente de la vidéo…", color = Muted, modifier = Modifier.align(Alignment.Center))
                 }
@@ -418,6 +436,8 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
     var key by remember { mutableStateOf("") }
     var gemini by remember { mutableStateOf("") }
     var bargeIn by remember { mutableStateOf(s.bargeIn) }
+    var maxStep by remember { mutableStateOf(s.maxStep.toFloat()) }
+    var guardOn by remember { mutableStateOf(s.guardOn) }
     var model by remember { mutableStateOf(vm.model) }
     var confirm by remember { mutableStateOf(s.confirm) }
     var speak by remember { mutableStateOf(s.speak) }
@@ -426,7 +446,7 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
         title = { Text("Réglages") },
         confirmButton = {
             TextButton(onClick = {
-                vm.saveSettings(key, gemini, model, confirm, speak, bargeIn)
+                vm.saveSettings(key, gemini, model, confirm, speak, bargeIn, Math.round(maxStep * 10) / 10.0, guardOn)
                 onDismiss()
             }) { Text("Enregistrer") }
         },
@@ -470,9 +490,26 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
                     modifier = Modifier.fillMaxWidth(),
                 )
                 SettingSwitch("Valider chaque déplacement (conseillé)", confirm) { confirm = it }
+                Text(
+                    "Distance max par pas : %.1f m".format(Math.round(maxStep * 10) / 10.0),
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+                Slider(
+                    value = maxStep,
+                    onValueChange = { maxStep = it },
+                    valueRange = 0.2f..1.0f,
+                    steps = 7,
+                )
+                SettingSwitch("Détecteur d'obstacles (arrête le drone s'il va toucher quelque chose devant)", guardOn) { guardOn = it }
+                Text(
+                    "Le détecteur regarde la vidéo quand le drone avance. Il ne voit pas sur les côtés, " +
+                        "ni les vitres ou les murs blancs unis, et se met en veille si la caméra regarde vers le sol.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 SettingSwitch("Le drone parle à voix haute", speak) { speak = it }
                 Text(
-                    "Limites de sécurité : plafond 3 m, rayon 15 m, 1 m et 90° max par action, 40 actions max, " +
+                    "Limites de sécurité : plafond 3 m, rayon 15 m, 90° max par action, 40 actions max, " +
                         "atterrissage automatique sous 25 % de batterie. Dis « stop » ou « atterris » à tout moment.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

@@ -53,7 +53,8 @@ Exemples de phrases : « qu'est-ce que tu vois ? », « décolle », « tourne-t
 
 - L'IA ne commande jamais les moteurs : elle propose une action, le code la vérifie puis l'exécute.
 - Plafond de 3 m (réglé aussi dans le drone), rayon de 15 m autour du décollage, plus la géobarrière du Bebop.
-- 1 m et 90° maximum par action, 40 actions maximum par session.
+- Distance max par action **réglable** dans ⚙ (de 0,2 à 1 m), 90° maximum, 40 actions maximum par session.
+- **Détecteur d'obstacles** (activé par défaut) : quand le drone avance, le téléphone analyse la vidéo une douzaine de fois par seconde. Si quelque chose grossit trop vite au centre de l'image (contact dans moins d'environ 2 s), le déplacement est annulé tout de suite, sans l'IA, et l'avance est bloquée 5 s. Il ne voit pas sur les côtés ni au-dessus, rate les vitres et les murs blancs unis, et se met en veille quand la caméra regarde vers le sol. En simulation, tu peux le tester en approchant le téléphone d'un mur pendant un déplacement vers l'avant.
 - Atterrissage automatique sous 25 % de batterie.
 - Pas d'image, pas de déplacement. Une réponse illisible de l'IA donne un stationnaire, jamais une action inventée.
 - **Mode validation** (activé par défaut) : chaque déplacement attend ton « oui » (dit à voix haute ou bouton Oui). C'est l'application qui l'entend, pas l'IA.

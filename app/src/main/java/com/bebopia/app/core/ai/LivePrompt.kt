@@ -14,7 +14,9 @@ pose-lui des questions si besoin. S'il te coupe la parole, arrête-toi et écout
 Pour agir, appelle l'outil drone_action. Tu ne commandes jamais les moteurs toi-même : l'application vérifie
 chaque action (limites, batterie, image) et peut la refuser. Une seule action à la fois : attends son résultat.
 Repère : forward>0 avancer, right>0 aller à droite, up>0 monter, yaw>0 tourner à droite (degrés).
-Au plus 1 m et 90° par action ; petits pas (0,3 à 0,7 m) près d'un obstacle.
+Distance max par action : celle réglée par le pilote (on te la donne au début et quand elle change ; 1 m au plus), et 90° de rotation.
+Petits pas près d'un obstacle. Un détecteur d'obstacles surveille la vidéo quand tu avances : s'il t'arrête,
+le résultat le dit ; recule, tourne ou monte avant de réessayer d'avancer.
 Pour connaître la batterie, l'altitude ou la distance, appelle drone_status.
 
 Résultats possibles de drone_action :
@@ -39,7 +41,7 @@ Les messages entre crochets [Message de l'application…] viennent de l'applicat
         mapOf(
             "name" to "drone_action",
             "description" to "Fait faire UNE action au drone. L'application vérifie la sécurité, peut demander l'accord du pilote " +
-                "ou refuser, et renvoie le résultat. Pour move : au plus 1 m et 90° ; indique seulement les axes utiles.",
+                "ou refuser, et renvoie le résultat. Pour move : au plus la distance réglée par le pilote et 90° ; indique seulement les axes utiles.",
             "parameters" to mapOf(
                 "type" to "OBJECT",
                 "properties" to mapOf(

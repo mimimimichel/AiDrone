@@ -12,7 +12,7 @@ data class Limits(
     val maxAltitudeM: Double = 3.0,   // plafond (envoyé au drone et vérifié ici)
     val minAltitudeM: Double = 0.6,   // l'IA ne descend pas plus bas en vol
     val maxDistanceM: Double = 15.0,  // rayon autour du décollage (estimation)
-    val maxStepM: Double = 1.0,       // déplacement max par action
+    @Volatile var maxStepM: Double = 1.0, // déplacement max par action (réglable : 0,2 à 1 m)
     val maxYawDeg: Double = 90.0,     // rotation max par action
     val maxSteps: Int = 40,           // actions max par session IA
     val minBattery: Int = 25,         // en dessous (%) : atterrissage automatique
@@ -38,6 +38,12 @@ abstract class DroneBase(val limits: Limits) {
         protected set
 
     open var flying: Boolean = false
+
+    /** Vrai pendant un déplacement vers l'avant (le détecteur d'obstacles surveille alors la vidéo). */
+    @Volatile var movingForward = false
+        private set
+    @Volatile private var cancelReason: String? = null
+    @Volatile private var obstacleUntil = 0L
 
     abstract val name: String
     abstract fun connect()
@@ -78,7 +84,17 @@ abstract class DroneBase(val limits: Limits) {
         return "arrêt d'urgence"
     }
 
-    fun cancelMove() = doCancelMove()
+    fun cancelMove() {
+        cancelReason = "interrompu"
+        doCancelMove()
+    }
+
+    /** Appelé par le détecteur d'obstacles : arrête le déplacement et bloque l'avance quelques secondes. */
+    fun stopForObstacle() {
+        cancelReason = "interrompu : obstacle détecté devant"
+        obstacleUntil = System.currentTimeMillis() + 5000
+        doCancelMove()
+    }
 
     fun hover(seconds: Double): String {
         val s = seconds.coerceIn(0.5, 5.0)
@@ -101,6 +117,10 @@ abstract class DroneBase(val limits: Limits) {
         val u = up.coerceIn(-l.maxStepM, l.maxStepM)
         val yw = yaw.coerceIn(-l.maxYawDeg, l.maxYawDeg)
 
+        if (f > 0.05 && System.currentTimeMillis() < obstacleUntil) {
+            return "refusé : obstacle détecté devant il y a quelques secondes. Recule, tourne ou monte avant d'avancer"
+        }
+
         val newZ = (z + u).coerceIn(l.minAltitudeM, l.maxAltitudeM)
         val du = newZ - z
 
@@ -110,7 +130,10 @@ abstract class DroneBase(val limits: Limits) {
         if (hypot(nx, ny) > l.maxDistanceM) {
             return "refusé : sortirait du rayon de %.0f m (distance actuelle %.1f m)".format(l.maxDistanceM, hypot(x, y))
         }
-        moveTracked(f, r, du, yw, nx, ny, newZ)
+        val done = moveTracked(f, r, du, yw, nx, ny, newZ)
+        if (done < 1.0) {
+            return "${cancelReason ?: "interrompu"} (fait environ %.0f %% du déplacement)".format(done * 100)
+        }
         return "déplacé (avant %+.1f m, droite %+.1f m, haut %+.1f m, rotation %+.0f°)".format(f, r, du, yw)
     }
 
@@ -123,16 +146,29 @@ abstract class DroneBase(val limits: Limits) {
         val f = dx * cos(h) + dy * sin(h)
         val r = -dx * sin(h) + dy * cos(h)
         if (hypot(f, r) < 0.2) return "déjà au point de départ"
-        moveTracked(f, r, 0.0, 0.0, 0.0, 0.0, z)
+        val done = moveTracked(f, r, 0.0, 0.0, 0.0, 0.0, z)
+        if (done < 1.0) return "retour au départ ${cancelReason ?: "interrompu"}"
         return "retour au départ"
     }
 
-    private fun moveTracked(f: Double, r: Double, u: Double, yaw: Double, nx: Double, ny: Double, nz: Double) {
+    /** Renvoie la part du déplacement effectuée (1 = en entier, moins s'il a été interrompu). */
+    private fun moveTracked(f: Double, r: Double, u: Double, yaw: Double, nx: Double, ny: Double, nz: Double): Double {
         val dist = sqrt(f * f + r * r + u * u)
         val waitS = 1.0 + dist / 0.6 + abs(yaw) / 40.0
-        doMove(f, r, -u, Math.toRadians(yaw), waitS)
-        x = nx; y = ny; z = nz
-        heading = (((heading + yaw + 180.0) % 360.0) + 360.0) % 360.0 - 180.0
+        cancelReason = null
+        movingForward = f > 0.05
+        val t0 = System.currentTimeMillis()
+        try {
+            doMove(f, r, -u, Math.toRadians(yaw), waitS)
+        } finally {
+            movingForward = false
+        }
+        // Interrompu : position estimée au prorata du temps écoulé (estimation grossière).
+        val done = if (cancelReason == null) 1.0
+        else ((System.currentTimeMillis() - t0) / 1000.0 / (waitS - 0.5)).coerceIn(0.0, 1.0)
+        x += (nx - x) * done; y += (ny - y) * done; z += (nz - z) * done
+        heading = (((heading + yaw * done + 180.0) % 360.0) + 360.0) % 360.0 - 180.0
+        return if (cancelReason == null) 1.0 else minOf(done, 0.99)
     }
 
     fun distanceFromHome(): Double = hypot(x, y)
@@ -148,6 +184,7 @@ abstract class DroneBase(val limits: Limits) {
         "distance_depart_m" to (distanceFromHome() * 10).roundToInt() / 10.0,
         "cap_deg" to heading.roundToInt(),
         "inclinaison_camera_deg" to cameraTilt,
+        "pas_max_m" to limits.maxStepM,
     )
 }
 
@@ -167,12 +204,20 @@ class SimDrone(limits: Limits, private val log: (String) -> Unit = {}) : DroneBa
     override fun doTakeoff() { log("[SIM] décollage"); drain(1.0); Thread.sleep(1000) }
     override fun doLand() { log("[SIM] atterrissage"); Thread.sleep(1000) }
     override fun doEmergency() = log("[SIM] ARRÊT D'URGENCE")
-    override fun doCancelMove() = log("[SIM] annulation du déplacement")
+    @Volatile private var moving = java.util.concurrent.CountDownLatch(0)
+
+    override fun doCancelMove() {
+        log("[SIM] annulation du déplacement")
+        moving.countDown()
+    }
 
     override fun doMove(forward: Double, right: Double, down: Double, yawRad: Double, waitS: Double) {
         log("[SIM] moveBy(dx=%.2f, dy=%.2f, dz=%.2f, dpsi=%.2f rad)".format(forward, right, down, yawRad))
         drain(0.5)
-        Thread.sleep((minOf(waitS, 1.5) * 1000).toLong())
+        // Dure comme un vrai déplacement (on peut tester le détecteur en avançant le téléphone vers un mur).
+        val latch = java.util.concurrent.CountDownLatch(1)
+        moving = latch
+        latch.await((minOf(waitS, 4.0) * 1000).toLong(), java.util.concurrent.TimeUnit.MILLISECONDS)
     }
 
     override fun doTilt(degrees: Int) = log("[SIM] caméra -> $degrees°")

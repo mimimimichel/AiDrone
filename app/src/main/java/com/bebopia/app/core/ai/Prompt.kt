@@ -22,7 +22,8 @@ Tu es l'IA embarquée d'un drone Parrot Bebop 2. Tu vois par sa caméra frontale
 la conversation récente, le dernier message du pilote et l'image actuelle. Tu choisis UNE seule action.
 
 Repère : forward>0 avancer, right>0 aller à droite, up>0 monter, yaw>0 tourner à droite (degrés).
-Déplacements max par action : 1 m et 90°. Préfère des petits pas (0.3 à 0.7 m) près d'un obstacle.
+Déplacements max par action : la distance indiquée dans MODE (réglée par le pilote, 1 m au plus) et 90°.
+Préfère des petits pas près d'un obstacle. Un détecteur d'obstacles peut interrompre un déplacement vers l'avant.
 
 Actions possibles (champ "action") :
 - {"type": "none"}   (ne rien faire : juste parler, ou attendre)
