@@ -8,7 +8,7 @@ import kotlin.concurrent.thread
 /** Fournit l'image actuelle de la caméra en JPEG base64 (null si indisponible). Bloquant. */
 fun interface Eyes { fun captureJpegBase64(): String? }
 
-/** Le modèle de vision. Bloquant. */
+/** Le modèle de vision (mode « une question, une réponse »). Bloquant. */
 fun interface Brain { fun decide(jpegBase64: String?, userText: String): Decision }
 
 fun interface Speaker { fun say(text: String) }
@@ -19,11 +19,14 @@ class ChatLine(val role: Role, val text: String)
 /**
  * Boucle de l'agent : écouter -> regarder -> décider -> parler -> agir, dans son propre thread.
  * L'IA ne touche jamais aux moteurs : elle propose, ce code vérifie et exécute.
+ *
+ * Sans [brain] (conversation en direct avec Gemini Live), la conversation se passe ailleurs :
+ * l'IA propose ses actions par [aiAction], et ce que dit le pilote arrive par [liveTranscript].
  */
 class Agent(
     private val drone: DroneBase,
     private val eyes: Eyes,
-    private val brain: Brain,
+    private val brain: Brain?,
     private val speaker: Speaker,
     @Volatile var goal: String = "",
     @Volatile var confirm: Boolean = true,
@@ -86,6 +89,15 @@ class Agent(
     /** Appelé à chaque changement notable (pour rafraîchir l'interface). */
     var onChange: (() -> Unit)? = null
 
+    /** Conversation en direct : où envoyer les messages écrits du pilote. */
+    var forward: ((String) -> Unit)? = null
+
+    /** Conversation en direct : événement à signaler à l'IA (reply = elle doit répondre). */
+    var onEvent: ((text: String, reply: Boolean) -> Unit)? = null
+
+    private val live get() = brain == null
+    private val execLock = Any()
+
     private val history = mutableListOf<String>()
     private val chatLines = mutableListOf<ChatLine>()
     private val inbox = LinkedBlockingDeque<String>()
@@ -116,8 +128,114 @@ class Agent(
     private fun changed() = onChange?.invoke()
 
     private fun speak(text: String) {
-        addChat(Role.DRONE, text)
+        // En direct, la voix de l'IA arrive déjà dans la conversation par sa transcription.
+        if (!live) addChat(Role.DRONE, text)
         speaker.say(text)
+    }
+
+    // ---- conversation en direct --------------------------------------------------------
+    private var openRole: Role? = null
+    private var utterance = ""
+    private var utteranceHandled = false
+
+    /** Morceau de transcription (voix du pilote ou de l'IA), affiché au fil de l'eau. */
+    fun liveTranscript(pilot: Boolean, fragment: String) {
+        val role = if (pilot) Role.PILOT else Role.DRONE
+        val text: String
+        var finished: String? = null
+        synchronized(chatLines) {
+            if (openRole == Role.PILOT && role != Role.PILOT && !utteranceHandled) finished = utterance
+            val last = chatLines.lastOrNull()
+            if (openRole == role && last != null && last.role == role) {
+                text = last.text + fragment
+                chatLines[chatLines.size - 1] = ChatLine(role, text)
+            } else {
+                text = fragment.trimStart()
+                chatLines.add(ChatLine(role, text))
+                if (chatLines.size > 200) chatLines.removeAt(0)
+                if (pilot) utteranceHandled = false
+            }
+            openRole = role
+        }
+        // Ta phrase est finie (l'IA commence à répondre) : on regarde si c'était un oui ou un non.
+        finished?.let { utteranceHandled = yesNo(it) }
+        if (pilot) {
+            utterance = text
+            // « stop » et « atterris » : tout de suite, sans attendre la fin de la phrase.
+            if (!utteranceHandled) utteranceHandled = urgentWords(text)
+        }
+        changed()
+    }
+
+    fun liveTurnEnd() {
+        var finished: String? = null
+        synchronized(chatLines) {
+            if (openRole == Role.PILOT && !utteranceHandled) finished = utterance
+            openRole = null
+        }
+        finished?.let { utteranceHandled = yesNo(it) }
+    }
+
+    /**
+     * Mots de sécurité et oui/non, traités tout de suite par l'application, sans l'IA.
+     * Renvoie true si la phrase a été prise en charge.
+     */
+    private fun safetyWords(text: String): Boolean = urgentWords(text) || yesNo(text)
+
+    private fun urgentWords(text: String): Boolean {
+        val norm = normalize(text)
+        val words = norm.split(' ').filter { it.isNotBlank() }.toSet()
+        if (LAND_PHRASES.any { norm.contains(it) }) {
+            humanLand()
+            return true
+        }
+        if (words.any { it in STOP_WORDS }) {
+            stopNow()
+            return true
+        }
+        return false
+    }
+
+    private fun yesNo(text: String): Boolean {
+        val norm = normalize(text)
+        val words = norm.split(' ').filter { it.isNotBlank() }.toSet()
+        if (pending != null && words.size <= 3) {
+            if (words.any { it in YES_WORDS } || norm.contains("vas y")) {
+                approve()
+                return true
+            }
+            if (words.any { it in NO_WORDS }) {
+                reject()
+                return true
+            }
+        }
+        return false
+    }
+
+    /**
+     * Action proposée par l'IA en direct (outil drone_action). Bloquant : renvoie le résultat
+     * une fois l'action faite, mise en attente de ton accord, ou refusée.
+     */
+    fun aiAction(action: Map<String, Any?>): String {
+        val t = action["type"] as? String ?: return "refusé : type d'action manquant"
+        if (t == "land") return execute(action)
+        if (paused) return "refusé : IA en pause. Le pilote doit appuyer sur « ▶ IA » pour te laisser piloter."
+        if (steps >= drone.limits.maxSteps) {
+            thread(isDaemon = true) { autoStop("nombre maximum d'actions atteint, j'atterris") }
+            return "refusé : nombre maximum d'actions atteint, atterrissage"
+        }
+        if (t in NEEDS_IMAGE && eyes.captureJpegBase64() == null) {
+            system("Action « ${describe(action)} » refusée : pas d'image.")
+            return "refusé : pas d'image de la caméra"
+        }
+        if (confirm && t in NEEDS_CONFIRM) {
+            pending = action
+            lastText = "Propose : ${describe(action)}"
+            changed()
+            return "en attente : le pilote doit dire oui ou non (ou toucher Oui / Non). " +
+                "N'appelle pas l'outil une deuxième fois, l'application te dira sa réponse."
+        }
+        return execute(action)
     }
 
     // ---- cycle de vie -----------------------------------------------------------------
@@ -140,6 +258,10 @@ class Agent(
         idle = false
         lastText = if (paused) "IA en pause" else "IA active"
         system(lastText)
+        onEvent?.invoke(
+            if (paused) "Le pilote t'a mis en pause : tu ne peux plus bouger." else "Le pilote te laisse piloter : tu peux agir.",
+            false,
+        )
     }
 
     fun stopNow() {
@@ -192,7 +314,8 @@ class Agent(
         synchronized(history) { history.add("proposition refusée par le pilote : $p") }
         pending = null
         idle = false
-        inbox.add("(j'ai refusé ta dernière proposition)")
+        if (live) onEvent?.invoke("Le pilote a refusé ta proposition (${describe(p)}).", false)
+        else inbox.add("(j'ai refusé ta dernière proposition)")
         changed()
     }
 
@@ -206,26 +329,16 @@ class Agent(
 
     /** Ce que tu dis ou écris. Les ordres de sécurité sont traités tout de suite, sans l'IA. */
     fun hear(text: String) {
-        val norm = normalize(text)
-        val words = norm.split(' ').filter { it.isNotBlank() }.toSet()
         addChat(Role.PILOT, text)
-        if (LAND_PHRASES.any { norm.contains(it) }) {
-            humanLand()
+        synchronized(chatLines) { openRole = null }
+        if (safetyWords(text)) {
+            // En direct, l'IA doit savoir ce qui s'est passé.
+            forward?.invoke(text)
             return
         }
-        if (words.any { it in STOP_WORDS }) {
-            stopNow()
+        forward?.let {
+            it(text)
             return
-        }
-        if (pending != null && words.size <= 3) {
-            if (words.any { it in YES_WORDS } || norm.contains("vas y")) {
-                approve()
-                return
-            }
-            if (words.any { it in NO_WORDS }) {
-                reject()
-                return
-            }
         }
         pending = null // un nouvel ordre remplace la proposition en attente
         idle = false
@@ -265,7 +378,20 @@ class Agent(
     private fun step() {
         approved?.let { action ->
             approved = null
-            if (!paused) execute(action)
+            if (!paused) {
+                val r = execute(action)
+                onEvent?.invoke("Le pilote a validé « ${describe(action)} ». Résultat : $r", true)
+            }
+            return
+        }
+
+        if (brain == null) {
+            // En direct : la conversation se passe ailleurs, ici on surveille la batterie.
+            val bat = drone.battery()
+            if (!paused && drone.flying && bat != null && bat < drone.limits.minBattery) {
+                autoStop("batterie faible ($bat %), j'atterris")
+            }
+            sleep(150)
             return
         }
 
@@ -352,7 +478,7 @@ class Agent(
         execute(action)
     }
 
-    private fun execute(action: Map<String, Any?>) {
+    private fun execute(action: Map<String, Any?>): String = synchronized(execLock) {
         steps++
         val result = try {
             when (action["type"] as? String) {
@@ -376,9 +502,10 @@ class Agent(
         lastText = "${describe(action)} : $result"
         if (result.startsWith("refusé") || result.startsWith("échec")) {
             system(result)
-            speaker.say("Action impossible.")
+            if (!live) speaker.say("Action impossible.")
         }
         changed()
+        result
     }
 
     private fun autoStop(reason: String) {

@@ -1,9 +1,9 @@
 # Bebop IA : une app Android pour discuter avec ton Bebop 2 et le laisser piloter par une IA
 
-Le téléphone devient la télécommande, les yeux et la voix du drone. Il reçoit la vidéo du Bebop 2 (ou Bebop 2 Power), l'envoie à Claude avec ce que tu dis, et Claude répond à voix haute et propose des actions. Ces actions ne sont exécutées qu'après les vérifications de sécurité, et après ton accord si tu le souhaites.
+Le téléphone devient la télécommande, les yeux et la voix du drone. Il reçoit la vidéo du Bebop 2 (ou Bebop 2 Power) et tu **discutes en direct** avec l'IA (Gemini Live, comme dans Vr2) : elle voit une image par seconde, te répond à voix haute, tu peux lui couper la parole, et elle propose des actions. Ces actions ne sont exécutées qu'après les vérifications de sécurité, et après ton accord si tu le souhaites.
 
 ```
- Bebop 2 ──Wi-Fi──► téléphone ──4G──► Claude
+ Bebop 2 ──Wi-Fi──► téléphone ──4G──► Gemini
    ▲   vidéo + état      │  micro / écran / voix
    └── commandes ◄── garde-fous ◄── action proposée
 ```
@@ -22,14 +22,14 @@ Ouvre le dossier du projet, attends la synchronisation Gradle, branche ton tél�
 
 ## Premier lancement
 
-1. **Réglages (⚙)** : colle ta clé API Claude (console.anthropic.com). Le modèle par défaut est `claude-sonnet-5-5`, tu peux le changer.
+1. **Réglages (⚙)** : colle ta **clé Gemini**, gratuite sur [aistudio.google.com/apikey](https://aistudio.google.com/apikey) (la même que pour Vr2). Une clé Claude (payante) reste possible en option, sans conversation en direct.
 2. **Teste d'abord en simulation** : bouton « Simulation ». La caméra du téléphone remplace celle du drone et rien ne vole. Parle à l'IA, montre-lui des objets, appuie sur « ▶ IA » et regarde ce qu'elle propose de faire.
 
 ## Voler avec le Bebop
 
 1. Allume le Bebop et laisse la **Skycontroller éteinte** : le drone n'accepte qu'un pilote à la fois.
 2. Sur le téléphone, connecte le Wi‑Fi au réseau du drone (`Bebop2Power-…` ou `Bebop2-…`). Si Android signale que ce réseau n'a pas d'accès Internet, choisis de **rester connecté**.
-3. Vérifie que les **données mobiles sont activées** : c'est par là que passe Claude.
+3. Vérifie que les **données mobiles sont activées** : c'est par là que passe l'IA.
 4. Dans l'app : « Connecter le Bebop ». La vidéo apparaît après quelques secondes.
 5. L'IA démarre **en pause** : elle te répond, mais ne bouge pas. Appuie sur « ▶ IA » pour la laisser piloter.
 
@@ -37,7 +37,7 @@ Ouvre le dossier du projet, attends la synchronisation Gradle, branche ton tél�
 
 | Commande | Effet |
 |---|---|
-| 🎤 | Parler au drone (il t'écoute jusqu'à ce que tu te taises) |
+| 🎤 | Ouvrir la conversation : parle normalement, le drone répond, tu peux lui couper la parole. Réappuie pour la fermer |
 | Champ texte + ➤ | Écrire au drone |
 | **▶ IA / ⏸ Pause IA** | Laisser l'IA piloter, ou la mettre en pause |
 | **Oui / Non** | Accepter ou refuser le déplacement proposé (mode validation) |
@@ -56,7 +56,8 @@ Exemples de phrases : « qu'est-ce que tu vois ? », « décolle », « tourne-t
 - 1 m et 90° maximum par action, 40 actions maximum par session.
 - Atterrissage automatique sous 25 % de batterie.
 - Pas d'image, pas de déplacement. Une réponse illisible de l'IA donne un stationnaire, jamais une action inventée.
-- **Mode validation** (activé par défaut) : chaque déplacement attend ton « oui ».
+- **Mode validation** (activé par défaut) : chaque déplacement attend ton « oui » (dit à voix haute ou bouton Oui). C'est l'application qui l'entend, pas l'IA.
+- Si le drone s'interrompt tout seul (il s'entend dans le haut-parleur), désactive « Je peux couper la parole au drone » dans les réglages, ou mets des écouteurs.
 - Si la liaison Wi‑Fi est perdue, l'IA se met en pause. Le Bebop applique alors son propre comportement de sécurité.
 
 Les limites se règlent dans `app/src/main/java/com/bebopia/app/core/Drone.kt` (classe `Limits`).

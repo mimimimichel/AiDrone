@@ -274,8 +274,9 @@ fun MainScreen(vm: MainViewModel) {
 }
 
 private fun statusLabel(s: UiState): String {
+    if (s.pending != null && s.voice.isNotEmpty()) return "Attend ton accord : dis oui ou non"
     val base = when {
-        s.listening -> "🎤 J'écoute…"
+        s.voice.isNotEmpty() -> s.voice
         s.paused -> "PAUSE"
         s.thinking -> "Réflexion…"
         s.pending != null -> "Attend ton accord"
@@ -415,6 +416,8 @@ private fun CameraPreview(vm: MainViewModel) {
 @Composable
 private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit) {
     var key by remember { mutableStateOf("") }
+    var gemini by remember { mutableStateOf("") }
+    var bargeIn by remember { mutableStateOf(s.bargeIn) }
     var model by remember { mutableStateOf(vm.model) }
     var confirm by remember { mutableStateOf(s.confirm) }
     var speak by remember { mutableStateOf(s.speak) }
@@ -423,7 +426,7 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
         title = { Text("Réglages") },
         confirmButton = {
             TextButton(onClick = {
-                vm.saveSettings(key, model, confirm, speak)
+                vm.saveSettings(key, gemini, model, confirm, speak, bargeIn)
                 onDismiss()
             }) { Text("Enregistrer") }
         },
@@ -431,9 +434,28 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 OutlinedTextField(
+                    value = gemini,
+                    onValueChange = { gemini = it },
+                    label = { Text(if (s.hasGeminiKey) "Clé Gemini (déjà enregistrée)" else "Clé Gemini") },
+                    placeholder = { Text("AIza…") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    "Gratuite sur aistudio.google.com/apikey (la même que pour Vr2). Avec elle, tu discutes en direct avec le drone.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
+                )
+                SettingSwitch("Je peux couper la parole au drone (désactive si le drone s'interrompt tout seul)", bargeIn) { bargeIn = it }
+                Spacer(Modifier.height(12.dp))
+                Text("Optionnel : Claude à la place de Gemini (clé payante)", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(4.dp))
+                OutlinedTextField(
                     value = key,
                     onValueChange = { key = it },
-                    label = { Text(if (s.hasApiKey) "Clé API Claude (déjà enregistrée)" else "Clé API Claude") },
+                    label = { Text(if (s.hasClaudeKey) "Clé API Claude (déjà enregistrée)" else "Clé API Claude") },
                     placeholder = { Text("sk-ant-…") },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
@@ -443,7 +465,7 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
                 OutlinedTextField(
                     value = model,
                     onValueChange = { model = it },
-                    label = { Text("Modèle") },
+                    label = { Text("Modèle Claude") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )

@@ -9,6 +9,9 @@ import androidx.camera.view.PreviewView
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.bebopia.app.android.BebopVideo
+import com.bebopia.app.android.GeminiLive
+import com.bebopia.app.android.LiveState
+import com.bebopia.app.android.VoiceState
 import com.bebopia.app.android.NetworkRouter
 import com.bebopia.app.android.PreviewEyes
 import com.bebopia.app.android.TextureEyes
@@ -21,6 +24,9 @@ import com.bebopia.app.core.ai.Brain
 import com.bebopia.app.core.ai.ChatLine
 import com.bebopia.app.core.ai.ClaudeBrain
 import com.bebopia.app.core.ai.Eyes
+import com.bebopia.app.core.ai.LivePrompt
+import com.bebopia.app.core.ai.Speaker
+import org.json.JSONArray
 import com.bebopia.app.core.ai.Role
 import com.bebopia.app.core.bebop.ArNetwork
 import com.bebopia.app.core.bebop.BebopDrone
@@ -51,11 +57,15 @@ data class UiState(
     val linkUp: Boolean = true,
     val hasVideo: Boolean = false,
     val listening: Boolean = false,
+    val voice: String = "",
     val network: String = "",
     val chat: List<ChatLine> = emptyList(),
     val confirm: Boolean = true,
     val speak: Boolean = true,
     val hasApiKey: Boolean = false,
+    val hasGeminiKey: Boolean = false,
+    val hasClaudeKey: Boolean = false,
+    val bargeIn: Boolean = true,
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -64,6 +74,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var apiKey: String
         get() = prefs.getString("api_key", "") ?: ""
         private set(v) = prefs.edit().putString("api_key", v.trim()).apply()
+    /** Clé Gemini (gratuite sur aistudio.google.com) : conversation vocale en direct. */
+    var geminiKey: String
+        get() = prefs.getString("gemini_key", "") ?: ""
+        private set(v) = prefs.edit().putString("gemini_key", v.trim()).apply()
+    var bargeIn: Boolean
+        get() = prefs.getBoolean("barge_in", true)
+        private set(v) = prefs.edit().putBoolean("barge_in", v).apply()
+    private val useLive get() = geminiKey.isNotBlank()
     var model: String
         get() = prefs.getString("model", DEFAULT_MODEL) ?: DEFAULT_MODEL
         private set(v) = prefs.edit().putString("model", v.trim().ifEmpty { DEFAULT_MODEL }).apply()
@@ -77,17 +95,35 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val limits = Limits()
     private val router = NetworkRouter(app).also { it.start() }
     @Volatile private var listening = false
+    @Volatile private var voiceLabel = ""
     private val voice = VoiceIO(
         app,
         onText = { send(it) },
         onStatus = { sysMessage(it) },
-        onListening = { listening = it; refresh() },
+        onState = { st, heard ->
+            listening = st != VoiceState.OFF
+            voiceLabel = when (st) {
+                VoiceState.OFF -> ""
+                VoiceState.LISTENING -> "🎤 Je t'écoute…"
+                VoiceState.HEARD -> "🎤 « $heard »"
+                VoiceState.SPEAKING -> "🔊 Le drone parle"
+            }
+            refresh()
+        },
     )
+    @Volatile private var live: GeminiLive? = null
+
+    /** La voix du drone : celle de Gemini pendant une conversation en direct, sinon la synthèse vocale du téléphone. */
+    private val speaker = Speaker { text ->
+        val l = live
+        if (l != null && l.active) l.say(text) else voice.say(text)
+    }
 
     @Volatile private var mode = Mode.NONE
     @Volatile private var drone: DroneBase? = null
     @Volatile private var video: BebopVideo? = null
     @Volatile private var agent: Agent? = null
+    @Volatile private var agentEyes: Eyes? = null
     private val localChat = mutableListOf<ChatLine>()
 
     // Vues fournies par l'interface
@@ -102,7 +138,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         voice.init()
         voice.speakEnabled = speak
         sysMessage("Connecte le téléphone au Wi-Fi du Bebop (Skycontroller éteinte), puis appuie sur « Connecter le Bebop ». Ou essaie la simulation avec la caméra du téléphone.")
-        if (apiKey.isBlank()) sysMessage("Ajoute ta clé API Claude dans les réglages (⚙) avant de commencer.")
+        if (geminiKey.isBlank() && apiKey.isBlank()) {
+            sysMessage("Ajoute ta clé Gemini dans les réglages (⚙) : elle est gratuite sur aistudio.google.com/apikey (la même que pour Vr2).")
+        }
         viewModelScope.launch {
             while (isActive) {
                 refresh()
@@ -147,17 +185,31 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             linkUp = bebop?.linkUp ?: true,
             hasVideo = video?.hasRecentFrame ?: (mode == Mode.SIM),
             listening = listening,
+            voice = voiceLabel,
             network = router.describe,
             chat = a?.chat ?: synchronized(localChat) { localChat.toList() },
             confirm = confirm,
             speak = speak,
-            hasApiKey = apiKey.isNotBlank(),
+            hasApiKey = geminiKey.isNotBlank() || apiKey.isNotBlank(),
+            hasGeminiKey = geminiKey.isNotBlank(),
+            hasClaudeKey = apiKey.isNotBlank(),
+            bargeIn = bargeIn,
         )
     }
 
     private fun makeAgent(d: DroneBase, eyes: Eyes): Agent {
-        val brain = Brain { image, text -> ClaudeBrain(apiKey, model, router::openApi).decide(image, text) }
-        val a = Agent(d, eyes, brain, voice, confirm = confirm, log = ::log)
+        // Avec une clé Gemini : conversation en direct (pas de cerveau « question/réponse »).
+        val brain = if (useLive) null else Brain { image, text -> ClaudeBrain(apiKey, model, router::openApi).decide(image, text) }
+        val a = Agent(d, eyes, brain, speaker, confirm = confirm, log = ::log)
+        if (brain == null) {
+            a.forward = { text ->
+                val l = live
+                if (l != null && l.active) l.ask(text)
+                else a.addChat(Role.SYSTEM, "Appuie sur 🎤 pour ouvrir la conversation avec le drone.")
+            }
+            a.onEvent = { text, reply -> live?.takeIf { it.active }?.event(text, reply) }
+        }
+        agentEyes = eyes
         synchronized(localChat) {
             localChat.forEach { a.addChat(it.role, it.text) }
             localChat.clear()
@@ -212,6 +264,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun disconnect() {
+        stopLive()
         val a = agent
         val d = drone
         val v = video
@@ -245,7 +298,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun toggleAi() = withAgent {
-        if (it.paused && apiKey.isBlank()) sysMessage("Ajoute d'abord ta clé API Claude dans les réglages (⚙).")
+        if (it.paused && geminiKey.isBlank() && apiKey.isBlank()) sysMessage("Ajoute d'abord ta clé Gemini dans les réglages (⚙).")
         else it.togglePause()
     }
     fun takeoff() = withAgent { it.humanTakeoff() }
@@ -257,19 +310,96 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (text.isBlank()) return
         withAgent { it.hear(text.trim()) }
     }
-    fun micPressed() = voice.toggleListening()
+    fun micPressed() {
+        if (!useLive) {
+            voice.toggleConversation()
+            return
+        }
+        if (live != null) {
+            stopLive()
+            return
+        }
+        withAgent { a -> startLive(a) }
+    }
 
-    fun saveSettings(key: String, model: String, confirm: Boolean, speak: Boolean) {
+    // ---- conversation en direct (Gemini Live) ---------------------------------------------
+    private fun startLive(a: Agent) {
+        val d = drone ?: return
+        val eyes = agentEyes ?: return
+        val l = GeminiLive(
+            context = getApplication(),
+            apiKey = geminiKey,
+            network = { router.cellular },
+            eyes = eyes,
+            systemPrompt = LivePrompt.SYSTEM,
+            tools = GeminiLive.toJson(LivePrompt.TOOLS) as JSONArray,
+            onTool = { name, args ->
+                when (name) {
+                    "drone_action" -> mapOf("result" to a.aiAction(args), "etat" to d.state())
+                    "drone_status" -> d.state() + mapOf(
+                        "ia" to if (a.paused) "en pause (ne peut pas bouger)" else "active",
+                        "validation_par_le_pilote" to a.confirm,
+                        "batterie_pourcent" to d.battery(),
+                    )
+                    else -> mapOf("result" to "outil inconnu")
+                }
+            },
+            onTranscript = { pilot, text -> a.liveTranscript(pilot, text) },
+            onTurnEnd = { a.liveTurnEnd() },
+            onState = { st ->
+                listening = st != LiveState.OFF
+                voiceLabel = when (st) {
+                    LiveState.OFF -> ""
+                    LiveState.CONNECTING -> "🎙 Connexion à Gemini…"
+                    LiveState.LISTENING -> "🎙 Conversation : je t'écoute"
+                    LiveState.SPEAKING -> "🔊 Le drone parle"
+                }
+                if (st == LiveState.OFF && live != null) live = null
+                refresh()
+            },
+            onError = { msg -> a.addChat(Role.SYSTEM, msg) },
+            bargeIn = bargeIn,
+        )
+        live = l
+        l.start()
+        if (!l.active) {
+            live = null
+            return
+        }
+        val where = if (mode == Mode.SIM) "Simulation : tu vois par la caméra du téléphone, rien ne vole." else "Tu es connecté au vrai Bebop."
+        val how = if (a.paused) "Tu es en pause : tu peux parler mais pas bouger." else "Tu peux piloter."
+        val check = if (a.confirm) " Chaque déplacement doit être validé par le pilote." else ""
+        l.event("Début de la conversation. $where $how$check Salue le pilote en une phrase courte.", true)
+        a.addChat(Role.SYSTEM, "Conversation ouverte : parle normalement, tu peux couper la parole au drone. Réappuie sur 🎤 pour la fermer.")
+    }
+
+    private fun stopLive() {
+        val l = live ?: return
+        live = null
+        l.stop()
+        listening = false
+        voiceLabel = ""
+        refresh()
+    }
+
+    fun saveSettings(key: String, gemini: String, model: String, confirm: Boolean, speak: Boolean, bargeIn: Boolean) {
+        val wasLive = useLive
         if (key.isNotBlank()) apiKey = key
+        if (gemini.isNotBlank()) geminiKey = gemini
+        this.bargeIn = bargeIn
         this.model = model
         this.confirm = confirm
         this.speak = speak
         voice.speakEnabled = speak
         agent?.confirm = confirm
+        if (agent != null && wasLive != useLive) {
+            sysMessage("Déconnecte puis reconnecte le drone (ou la simulation) pour utiliser la nouvelle clé.")
+        }
         refresh()
     }
 
     override fun onCleared() {
+        stopLive()
         disconnect()
         voice.release()
         router.stop()
