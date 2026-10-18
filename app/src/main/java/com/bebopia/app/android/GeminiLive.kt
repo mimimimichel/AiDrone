@@ -294,20 +294,34 @@ class GeminiLive(
     /** Signale un événement à l'IA ; [reply] : elle doit y répondre. */
     fun event(text: String, reply: Boolean) = clientText("[Message de l'application, pas du pilote] $text", reply)
 
-    // ---- image de la caméra, ~1 par seconde -------------------------------------------------
+    // ---- image de la caméra, 1 par seconde (le maximum de Gemini Live) ----------------------
+    @Volatile private var lastFrameAt = 0L
+    private val frameLock = Any()
+
+    /** Envoie tout de suite une image fraîche (après un déplacement, pour que l'IA voie le résultat). */
+    fun sendFrameNow() {
+        if (!setupDone) return
+        synchronized(frameLock) {
+            val jpeg = runCatching { eyes.captureJpegBase64() }.getOrNull()
+            // Image vide (vidéo pas prête) : le serveur couperait la connexion.
+            if (jpeg != null && jpeg.length > 2000) {
+                send(JSONObject().put("realtimeInput", JSONObject().put("video",
+                    JSONObject().put("data", jpeg).put("mimeType", "image/jpeg"))))
+                lastFrameAt = System.currentTimeMillis()
+            }
+        }
+    }
+
     private fun frameLoop() {
         while (active) {
-            val t0 = System.currentTimeMillis()
-            if (setupDone) {
-                val jpeg = runCatching { eyes.captureJpegBase64() }.getOrNull()
-                // Image vide (vidéo pas prête) : le serveur couperait la connexion.
-                if (jpeg != null && jpeg.length > 2000) {
-                    send(JSONObject().put("realtimeInput", JSONObject().put("video",
-                        JSONObject().put("data", jpeg).put("mimeType", "image/jpeg"))))
-                }
+            // Au plus une image par seconde, en comptant celles envoyées après un déplacement.
+            val wait = 1000 - (System.currentTimeMillis() - lastFrameAt)
+            if (wait > 0) {
+                Thread.sleep(wait)
+                continue
             }
-            val wait = 1000 - (System.currentTimeMillis() - t0)
-            if (wait > 0) Thread.sleep(wait)
+            if (setupDone) sendFrameNow() else Thread.sleep(200)
+            if (System.currentTimeMillis() - lastFrameAt >= 1000) Thread.sleep(200) // pas d'image : on réessaie bientôt
         }
     }
 

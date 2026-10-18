@@ -335,7 +335,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             tools = GeminiLive.toJson(LivePrompt.TOOLS) as JSONArray,
             onTool = { name, args ->
                 when (name) {
-                    "drone_action" -> mapOf("result" to a.aiAction(args), "etat" to d.state())
+                    "drone_action" -> {
+                        val r = a.aiAction(args)
+                        // Image prise juste après le mouvement : l'IA décide la suite sur ce qu'elle voit maintenant.
+                        live?.sendFrameNow()
+                        mapOf("result" to r, "etat" to d.state())
+                    }
                     "drone_status" -> d.state() + mapOf(
                         "ia" to if (a.paused) "en pause (ne peut pas bouger)" else "active",
                         "validation_par_le_pilote" to a.confirm,
