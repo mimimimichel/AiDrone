@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Drone vu du dessus : quatre rotors et un œil au centre -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- bras -->
+    <path android:strokeColor="#FF8A96A3" android:strokeWidth="4" android:strokeLineCap="round"
+        android:pathData="M38,38 L70,70 M70,38 L38,70" />
+    <!-- rotors -->
+    <path android:strokeColor="#FF4FC3F7" android:strokeWidth="3"
+        android:pathData="M38,38 m-9,0 a9,9 0 1,0 18,0 a9,9 0 1,0 -18,0" />
+    <path android:strokeColor="#FF4FC3F7" android:strokeWidth="3"
+        android:pathData="M70,38 m-9,0 a9,9 0 1,0 18,0 a9,9 0 1,0 -18,0" />
+    <path android:strokeColor="#FF4FC3F7" android:strokeWidth="3"
+        android:pathData="M38,70 m-9,0 a9,9 0 1,0 18,0 a9,9 0 1,0 -18,0" />
+    <path android:strokeColor="#FF4FC3F7" android:strokeWidth="3"
+        android:pathData="M70,70 m-9,0 a9,9 0 1,0 18,0 a9,9 0 1,0 -18,0" />
+    <!-- corps -->
+    <path android:fillColor="#FF263238"
+        android:pathData="M54,54 m-10,0 a10,10 0 1,0 20,0 a10,10 0 1,0 -20,0" />
+    <!-- œil -->
+    <path android:fillColor="#FF66BB6A"
+        android:pathData="M54,54 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0" />
+</vector>
