@@ -147,7 +147,7 @@ class GeminiLive(
         val client = http.newBuilder().apply {
             if (net != null) {
                 socketFactory(net.socketFactory)
-                dns { host -> net.getAllByName(host).toList() }
+                dns(object : okhttp3.Dns { override fun lookup(hostname: String) = net.getAllByName(hostname).toList() })
             }
         }.build()
         val req = Request.Builder().url(URL + apiKey).build()
