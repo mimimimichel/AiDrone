@@ -18,8 +18,8 @@ android {
         applicationId = "com.bebopia.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 23
-        versionName = "1.7"
+        versionCode = 24
+        versionName = "1.8"
         manifestPlaceholders["DJI_API_KEY"] = djiApiKey
         // Le kit DJI n'existe que pour les processeurs ARM (tous les téléphones récents).
         // -PonlyArm64=true : APK plus léger, pour les téléphones 64 bits (presque tous depuis 2017).
@@ -66,6 +66,8 @@ android {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")

@@ -120,6 +120,20 @@ class BebopDrone(
         net.send(BebopCmd.cameraOrientation(pitch.coerceIn(-80.0, 15.0).toFloat(), yaw.coerceIn(-35.0, 35.0).toFloat()))
     }
 
+    @Volatile private var rec = false
+    override val recording: Boolean get() = rec
+    override fun startRecording(): String? {
+        if (!net.sendWithAck(BebopCmd.videoRecord(true))) return "le Bebop n'a pas reçu l'ordre"
+        rec = true
+        return null
+    }
+    override fun stopRecording(): String? {
+        rec = false
+        return if (net.sendWithAck(BebopCmd.videoRecord(false))) null else "le Bebop n'a pas reçu l'ordre"
+    }
+
+    override fun lookHeading(): Double = com.bebopia.app.core.norm180(compass() + if (headRecent) notedHeadYaw.coerceIn(-35.0, 35.0) else 0.0)
+
     override fun doTilt(degrees: Int) {
         repeat(3) {
             net.send(BebopCmd.cameraOrientation(degrees.toFloat(), 0f))

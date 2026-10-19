@@ -42,7 +42,7 @@ abstract class DroneBase(val limits: Limits) {
 
     /** Vrai pendant un déplacement vers l'avant (le détecteur d'obstacles surveille alors la vidéo). */
     @Volatile var movingForward = false
-        private set
+        protected set
     @Volatile private var cancelReason: String? = null
     @Volatile private var obstacleUntil = 0L
 
@@ -94,12 +94,88 @@ abstract class DroneBase(val limits: Limits) {
     }
     protected open fun pause(seconds: Double) = Thread.sleep((seconds * 1000).toLong())
 
+    // ---- position absolue, regard du pilote, vitesses continues -----------------------------------
+    /** Cap boussole au décollage (pour passer du repère du décollage au repère nord/est). */
+    @Volatile protected var takeoffCompass = 0.0
+
+    /** Cap absolu (°, 0 = nord si le drone a une boussole ; sinon par rapport au décollage). */
+    open fun compass(): Double = norm180(heading + takeoffCompass)
+
+    /** Position (nord, est) en mètres par rapport au point de décollage. GPS si disponible, sinon estimation. */
+    open fun positionNE(): Pair<Double, Double> {
+        val c = Math.toRadians(takeoffCompass)
+        return (x * cos(c) - y * sin(c)) to (x * sin(c) + y * cos(c))
+    }
+
+    /** Vrai si [positionNE] vient du GPS (précise à quelques mètres, sans dérive). */
+    open val hasGps: Boolean get() = false
+
+    /** Position GPS (lat, lon) du drone et du point de départ, si disponibles. */
+    open fun gps(): Pair<Double, Double>? = null
+    open fun homeGps(): Pair<Double, Double>? = null
+
+    @Volatile private var headPitch = 0.0
+    @Volatile private var headYaw = 0.0
+    @Volatile private var headAt = 0L
+
+    /** Dernière orientation de la tête du pilote (casque), notée par l'application. */
+    fun noteHead(pitch: Double, yaw: Double) {
+        headPitch = pitch
+        headYaw = yaw
+        headAt = System.currentTimeMillis()
+    }
+    protected val headRecent: Boolean get() = System.currentTimeMillis() - headAt < 1500
+    protected val notedHeadYaw: Double get() = headYaw
+
+    /** Inclinaison actuelle de la caméra (°, négatif = vers le bas). */
+    open fun gimbalPitch(): Double = if (headRecent) headPitch.coerceIn(-80.0, 15.0) else cameraTilt.toDouble()
+
+    /** Direction (cap absolu) où regarde la caméra, donc le pilote quand il a le casque. */
+    open fun lookHeading(): Double = compass()
+
+    /** Le drone sait-il tenir une vitesse continue (suivi, plans de cinéma) ? Sinon : petits déplacements. */
+    open val supportsVelocity: Boolean get() = false
+
+    /**
+     * Vitesse continue (m/s et °/s), tenue pendant [holdMs] puis arrêt automatique si rien ne la renouvelle.
+     * forward > 0 avancer, right > 0 à droite, up > 0 monter, yawRate > 0 tourner à droite.
+     */
+    open fun velocity(forward: Double, right: Double, up: Double, yawRate: Double, holdMs: Long = 600) {}
+
+    /** Arrête toute vitesse continue. */
+    open fun stopVelocity() {}
+
+    /** Avance bloquée (obstacle vu il y a moins de 5 s). */
+    fun forwardBlocked(): Boolean = System.currentTimeMillis() < obstacleUntil
+
+    /** Pour les vitesses continues : le détecteur d'obstacles surveille quand on avance. */
+    protected fun setForward(on: Boolean) { movingForward = on }
+
+    /** Met à jour la position estimée pendant une vitesse continue (repère du drone). */
+    protected fun integrate(forward: Double, right: Double, up: Double, yawDeg: Double, dtS: Double) {
+        val h = Math.toRadians(heading)
+        x += (forward * cos(h) - right * sin(h)) * dtS
+        y += (forward * sin(h) + right * cos(h)) * dtS
+        z = (z + up * dtS).coerceAtLeast(0.0)
+        heading = norm180(heading + yawDeg * dtS)
+    }
+
+    /** Démarre / arrête l'enregistrement vidéo sur le drone. null = réussi, sinon la raison. */
+    open fun startRecording(): String? = "enregistrement vidéo non disponible sur ce drone"
+    open fun stopRecording(): String? = null
+    open val recording: Boolean get() = false
+
+    /** Qualité de la liaison radio (0 à 100), si le drone la donne. */
+    open fun signalQuality(): Int? = null
+
+
     fun takeoff(): String {
         if (flying) return "déjà en vol"
         doTakeoff()
         flying = true
         x = 0.0; y = 0.0; heading = 0.0
         z = 1.0 // le Bebop se stabilise vers 1 m
+        takeoffCompass = takeoffHeading()
         return "décollage effectué"
     }
 
@@ -110,6 +186,14 @@ abstract class DroneBase(val limits: Limits) {
         z = 0.0
         return "atterrissage effectué"
     }
+
+    /** Recale le cap estimé sur la boussole, si le drone en a une (le casque a pu le faire tourner). */
+    protected open fun syncHeading() {}
+
+    protected fun setHeadingFromCompass(c: Double) { heading = norm180(c - takeoffCompass) }
+
+    /** Cap boussole au moment du décollage (0 sans boussole). */
+    protected open fun takeoffHeading(): Double = 0.0
 
     /** Coupe les moteurs : le drone TOMBE. Dernier recours. */
     fun emergency(): String {
@@ -152,6 +236,7 @@ abstract class DroneBase(val limits: Limits) {
     /** [maxStep] : plus grand pendant une mission de recherche (segments de quelques mètres). */
     fun move(forward: Double, right: Double, up: Double, yaw: Double, maxStep: Double = limits.maxStepM): String {
         if (!flying) return "refusé : le drone est au sol (décolle d'abord)"
+        syncHeading()
         val l = limits
         val f = forward.coerceIn(-maxStep, maxStep)
         val r = right.coerceIn(-maxStep, maxStep)
@@ -181,6 +266,7 @@ abstract class DroneBase(val limits: Limits) {
     /** Revient au-dessus du point de décollage (estimation, pas GPS). */
     fun returnHome(): String {
         if (!flying) return "refusé : le drone est au sol"
+        syncHeading()
         val h = Math.toRadians(heading)
         val dx = -x
         val dy = -y
@@ -212,7 +298,7 @@ abstract class DroneBase(val limits: Limits) {
         return if (cancelReason == null) 1.0 else minOf(done, 0.99)
     }
 
-    fun distanceFromHome(): Double = hypot(x, y)
+    fun distanceFromHome(): Double = if (hasGps) positionNE().let { hypot(it.first, it.second) } else hypot(x, y)
 
     fun state(): Map<String, Any?> = mapOf(
         "en_vol" to flying,
@@ -228,6 +314,8 @@ abstract class DroneBase(val limits: Limits) {
         "pas_max_m" to limits.maxStepM,
     )
 }
+
+fun norm180(a: Double): Double = (((a + 180.0) % 360.0) + 360.0) % 360.0 - 180.0
 
 /** Drone fictif : rien ne vole, les commandes sont seulement journalisées. */
 class SimDrone(limits: Limits, private val log: (String) -> Unit = {}) : DroneBase(limits) {

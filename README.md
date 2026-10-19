@@ -96,6 +96,17 @@ Avant chaque avancée commandée par l'IA (même en mode confiance), l'image est
 
 Par défaut (✋ **mode prudent**), l'IA te demande ton accord avant chaque déplacement et chaque plan. En **🤝 mode confiance**, elle agit seule : ses plans sont lancés aussitôt et elle enchaîne les actions jusqu'à l'objectif. Pour changer : dis « mode confiance » ou « mode prudent », touche ✋/🤝 en haut de l'écran, ou passe par ⚙. Le cockpit du casque affiche « MODE CONFIANCE ». Les garde-fous restent actifs (plafond, rayon, détecteur d'obstacles, batterie), et « stop » / « atterris » agissent toujours instantanément.
 
+## Fonctions avancées (parle simplement à l'IA)
+
+- **« Va là »** : dans le casque, regarde (baisse la tête vers) un endroit au sol et dis « va là ». Le drone vise le centre de la caméra : distance = altitude ÷ tangente de l'inclinaison de la nacelle. La distance visée s'affiche à côté du réticule (⌖ 12 m). Sans casque, c'est le centre de l'image.
+- **Suivi** : « suis le chien », « suis-moi », « suis la voiture rouge ». L'IA repère la cible sur chaque image ; le Mavic la garde au centre et à la même taille (vitesse continue, 3 m/s max dehors, 0,6 m/s sans GPS) ; le Bebop la suit par petits pas. Ça s'arrête sur « stop », si la cible est perdue, à la limite du rayon ou quand la batterie baisse.
+- **Points sur la carte** : « marque ce point » (ou « marque le portail »), puis « retourne au point 2 », « va au portail », « fais le tour des points ». Avec le GPS, les points sont gardés d'un vol à l'autre ; sans GPS, seulement pour le vol en cours. Ils s'effacent dans ⚙.
+- **Plans de cinéma**, filmés sur la carte mémoire du drone : « fais une orbite autour de la maison » (mets d'abord le sujet au centre de l'image), « un dronie » (recule en montant), « un panorama », « une révélation » (caméra qui se relève en avançant), « une fusée » (monte caméra vers le sol). Dans ⚙, tu peux aussi **filmer chaque vol en entier**.
+- **Zone fouillée** : pendant une recherche sur un terrain, les zones déjà regardées se colorent en vert sur la carte, les pistes apparaissent en orange et la cible trouvée en rouge. La carte montre aussi la trace du vol (pointillés jaunes) et, sans GPS, une carte locale quadrillée d'après la position estimée.
+- **Retour par le même chemin** : « rentre par le même chemin ». L'application le fait aussi toute seule, puis atterrit, quand la batterie devient juste pour rentrer (30 % + 1 % par 25 m) ou quand le signal radio du Mavic passe sous 25 % à plus de 10 m. « stop » l'interrompt.
+- **Journal de vol** (⚙ → Journal des vols) : chaque vol, du décollage à l'atterrissage, avec la conversation, la trace, des photos (points marqués, cibles trouvées, une toutes les 2 minutes) et un résumé écrit par l'IA.
+- **Mémoire de l'IA** : elle retient ce qui sera utile plus tard (« la tulipe est sur le rebord de la fenêtre »), ou ce que tu lui dis de retenir, ainsi que le résumé de chaque vol. Elle s'en sert dans les conversations suivantes. Elle s'efface dans ⚙.
+
 ## Garde-fous
 
 - L'IA ne commande jamais les moteurs : elle propose une action, le code la vérifie puis l'exécute.
@@ -123,7 +134,7 @@ Les limites se règlent dans `app/src/main/java/com/bebopia/app/core/Drone.kt` (
 
 - `core/` : du Kotlin pur, testé sur ordinateur.
   - `bebop/` : protocole Parrot ARSDK3 (connexion, commandes, événements) et flux vidéo RTP/H.264.
-  - `ai/` : l'agent (boucle, sécurité, validation), le prompt et l'appel à Claude.
+  - `ai/` : l'agent (boucle, sécurité, validation), les prompts, la recherche d'objets et de zone, la navigation sur la carte (`Navigator`), le suivi (`Follower`), les plans de cinéma (`Shots`), le journal de vol (`FlightLog`) et la mémoire (`Memory`).
   - `Drone.kt` : limites, position estimée, drone simulé.
 - `android/` : réseau Wi‑Fi + 4G, voix, décodage vidéo matériel, captures d'image.
 - `ui/` : l'écran (Jetpack Compose).

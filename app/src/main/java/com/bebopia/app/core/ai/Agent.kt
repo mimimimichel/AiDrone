@@ -35,9 +35,12 @@ class Agent(
 ) {
     companion object {
         /** Actions soumises à ton accord en mode validation (atterrir n'en a jamais besoin). */
-        val NEEDS_CONFIRM = setOf("takeoff", "move", "return_home", "tilt_camera", "search", "search_area")
+        val NEEDS_CONFIRM = setOf("takeoff", "move", "return_home", "tilt_camera", "search", "search_area",
+            "go_look", "follow", "goto_point", "tour", "film", "retrace")
         /** Actions refusées s'il n'y a pas d'image. */
-        val NEEDS_IMAGE = setOf("takeoff", "move", "return_home", "search", "search_area")
+        val NEEDS_IMAGE = setOf("takeoff", "move", "return_home", "search", "search_area", "go_look", "follow", "film", "goto_point", "tour")
+        /** Actions longues (affichées dans le casque pendant qu'elles durent). */
+        val LONG = setOf("search", "search_area", "go_look", "follow", "goto_point", "tour", "film", "retrace", "return_home")
 
         val STOP_WORDS = setOf("stop", "stoppe", "arrete", "arretes", "arretez", "pause", "halte", "stopper")
         val LAND_PHRASES = listOf("atterri", "pose toi", "pose-toi", "pose le drone")
@@ -73,6 +76,12 @@ class Agent(
                 (num(action, "radius_m").takeIf { it > 0 }?.let { " (rayon %.0f m)".format(it) } ?: "")
             "search" -> "chercher « ${action["target"] ?: "?"} »" + if (action["approach"] == true) " et m'en approcher" else ""
             "return_home" -> "retour au départ"
+            "go_look" -> "aller là où je regarde"
+            "follow" -> "suivre « ${action["target"] ?: "?"} »"
+            "goto_point" -> "aller au point « ${action["point"] ?: "?"} »"
+            "tour" -> "faire le tour des points marqués"
+            "film" -> "plan de cinéma « ${action["shot"] ?: "?"} »"
+            "retrace" -> "rentrer par le même chemin" + if (action["land"] == true) " et atterrir" else ""
             else -> t ?: "?"
         }
     }
@@ -100,7 +109,7 @@ class Agent(
      * Avant d'avancer : le modèle de vision regarde s'il y a un obstacle dans l'axe.
      * Renvoie la distance autorisée (raccourcie pour garder une marge), ou un message de refus.
      */
-    private fun safeForward(forward: Double): Pair<Double, String?> {
+    fun safeForward(forward: Double): Pair<Double, String?> {
         val checker = pathChecker ?: return forward to null
         if (forward < 0.15) return forward to null
         val frame = eyes.captureJpegBase64() ?: return forward to "refusé : pas d'image pour vérifier la trajectoire"
@@ -130,6 +139,29 @@ class Agent(
     /** Mission de recherche sur un terrain (null sans clé Gemini). */
     var areaSearch: AreaSearch? = null
 
+    /** Carte : points marqués, « va là », retour par le même chemin. */
+    var nav: Navigator? = null
+
+    /** Suivi d'une cible (null sans clé Gemini). */
+    var follower: Follower? = null
+
+    /** Plans de cinéma. */
+    var shots: Shots? = null
+
+    /** Chaque ligne terminée de la conversation (pour le journal de vol). */
+    var onLine: ((Role, String) -> Unit)? = null
+
+    /** Photo pour le journal de vol. */
+    var onSnap: ((String) -> Unit)? = null
+
+    /** Action longue en cours (suivi, plan de cinéma…), pour le casque. */
+    @Volatile var activity: String? = null
+        private set
+
+    /** Retour automatique en cours (batterie, signal) : l'IA ne peut pas agir. */
+    @Volatile var returning = false
+        private set
+
     /** Conversation en direct : où envoyer les messages écrits du pilote. */
     var forward: ((String) -> Unit)? = null
 
@@ -158,6 +190,7 @@ class Agent(
             chatLines.add(ChatLine(role, text))
             if (chatLines.size > 200) chatLines.removeAt(0)
         }
+        onLine?.invoke(role, text)
         changed()
     }
 
@@ -184,6 +217,7 @@ class Agent(
         val role = if (pilot) Role.PILOT else Role.DRONE
         val text: String
         var finished: String? = null
+        var done: ChatLine? = null
         synchronized(chatLines) {
             if (openRole == Role.PILOT && role != Role.PILOT && !utteranceHandled) finished = utterance
             val last = chatLines.lastOrNull()
@@ -191,6 +225,7 @@ class Agent(
                 text = last.text + fragment
                 chatLines[chatLines.size - 1] = ChatLine(role, text)
             } else {
+                if (openRole != null) done = chatLines.lastOrNull { it.role == openRole }
                 text = fragment.trimStart()
                 chatLines.add(ChatLine(role, text))
                 if (chatLines.size > 200) chatLines.removeAt(0)
@@ -198,6 +233,7 @@ class Agent(
             }
             openRole = role
         }
+        done?.let { onLine?.invoke(it.role, it.text) }
         // Ta phrase est finie (l'IA commence à répondre) : on regarde si c'était un oui ou un non.
         finished?.let { utteranceHandled = yesNo(it) }
         if (pilot) {
@@ -210,10 +246,13 @@ class Agent(
 
     fun liveTurnEnd() {
         var finished: String? = null
+        var done: ChatLine? = null
         synchronized(chatLines) {
             if (openRole == Role.PILOT && !utteranceHandled) finished = utterance
+            openRole?.let { r -> done = chatLines.lastOrNull { it.role == r } }
             openRole = null
         }
+        done?.let { onLine?.invoke(it.role, it.text) }
         finished?.let { utteranceHandled = yesNo(it) }
     }
 
@@ -299,6 +338,7 @@ class Agent(
     fun aiAction(action: Map<String, Any?>): String {
         val t = action["type"] as? String ?: return "refusé : type d'action manquant"
         if (t == "land") return execute(action)
+        if (returning) return "refusé : retour automatique au départ en cours, n'agis pas."
         if (drone.manualControl) return "refusé : le pilote a repris la main avec sa radiocommande. Attends qu'il te rende les commandes."
         if (paused) return "refusé : IA en pause. Le pilote doit appuyer sur « ▶ IA » pour te laisser piloter."
         if (steps >= drone.limits.maxSteps) {
@@ -589,10 +629,7 @@ class Agent(
         val brain = brainOf()
         if (brain == null) {
             // En direct : la conversation se passe ailleurs, ici on surveille la batterie.
-            val bat = drone.battery()
-            if (!paused && drone.flying && bat != null && bat < drone.limits.minBattery) {
-                autoStop("batterie faible ($bat %), j'atterris")
-            }
+            checkBattery()
             sleep(150)
             return
         }
@@ -605,11 +642,7 @@ class Agent(
         }
 
         if (!paused) {
-            val bat = drone.battery()
-            if (bat != null && bat < drone.limits.minBattery) {
-                autoStop("batterie faible ($bat %), j'atterris")
-                return
-            }
+            if (checkBattery()) return
             if (steps >= drone.limits.maxSteps) {
                 autoStop("nombre maximum d'actions atteint, j'atterris")
                 return
@@ -682,6 +715,11 @@ class Agent(
 
     private fun execute(action: Map<String, Any?>): String = synchronized(execLock) {
         steps++
+        val type = action["type"] as? String
+        if (type in LONG) {
+            activity = describe(action)
+            changed()
+        }
         val result = try {
             when (action["type"] as? String) {
                 "takeoff" -> drone.takeoff()
@@ -705,6 +743,17 @@ class Agent(
                 ) ?: "refusé : la mission de recherche a besoin d'une clé Gemini"
                 "search" -> finder?.search(action["target"]?.toString() ?: "", action["approach"] == true)
                     ?: "refusé : la recherche d'objet a besoin d'une clé Gemini"
+                "go_look" -> nav?.goToLook() ?: "refusé : navigation indisponible"
+                "goto_point" -> nav?.goToPoint(action["point"]?.toString() ?: "") ?: "refusé : navigation indisponible"
+                "tour" -> nav?.tour() ?: "refusé : navigation indisponible"
+                "retrace" -> nav?.retrace(action["land"] == true) ?: "refusé : navigation indisponible"
+                "follow" -> {
+                    onSnap?.invoke("suivi " + (action["target"] ?: ""))
+                    follower?.follow(action["target"]?.toString() ?: "", num(action, "minutes").takeIf { it > 0 })
+                        ?: "refusé : le suivi a besoin d'une clé Gemini"
+                }
+                "film" -> shots?.film(action["shot"]?.toString() ?: "", num(action, "distance_m").takeIf { it > 0 }, action["record"] != false)
+                    ?: "refusé : plans de cinéma indisponibles"
                 "done" -> {
                     idle = true
                     "mission terminée, j'attends tes instructions"
@@ -713,7 +762,10 @@ class Agent(
             }
         } catch (e: Exception) {
             "échec : ${e.message}"
+        } finally {
+            if (type in LONG) activity = null
         }
+        if (type in LONG && (result.startsWith("trouvé") || result.startsWith("arrivé"))) onSnap?.invoke(result.take(40))
         log("étape $steps : $action -> $result")
         synchronized(history) { history.add("étape $steps : $action -> $result") }
         lastText = "${describe(action)} : $result"
@@ -723,6 +775,56 @@ class Agent(
         }
         changed()
         result
+    }
+
+    /** Batterie : retour par le même chemin quand il est temps de rentrer, atterrissage sur place en dernier recours. */
+    private fun checkBattery(): Boolean {
+        val bat = drone.battery() ?: return false
+        if (paused || !drone.flying || drone.manualControl || returning) return false
+        val dist = drone.distanceFromHome()
+        if (nav != null && dist > 5 && bat < AreaSearch.returnBattery(dist) && bat >= drone.limits.minBattery - 5) {
+            autoReturn("batterie à $bat %")
+            return true
+        }
+        if (bat < drone.limits.minBattery) {
+            autoStop("batterie faible ($bat %), j'atterris")
+            return true
+        }
+        return false
+    }
+
+    /**
+     * Retour automatique au départ par le même chemin, puis atterrissage (batterie, signal radio faible).
+     * Ce qui est en cours est arrêté d'abord. « stop » l'interrompt comme le reste.
+     */
+    fun autoReturn(reason: String) {
+        val n = nav ?: return
+        if (returning || !drone.flying || drone.manualControl) return
+        returning = true
+        pending = null
+        system("↩ $reason : je rentre au départ par le même chemin, puis j'atterris. Dis « stop » pour m'arrêter.")
+        speak("Je rentre.")
+        onEvent?.invoke("L'application ramène le drone au départ par le même chemin ($reason). N'agis pas pendant le retour.", false)
+        thread(isDaemon = true, name = "retour") {
+            paused = true // arrête l'action en cours
+            runCatching { drone.cancelMove() }
+            runCatching { drone.stopVelocity() }
+            synchronized(execLock) {
+                try {
+                    paused = false
+                    activity = "Retour au départ par le même chemin"
+                    changed()
+                    val r = runCatching { n.retrace(land = true) }.getOrElse { "échec : ${it.message}" }
+                    system("↩ $r")
+                    onEvent?.invoke("Retour automatique terminé : $r", false)
+                } finally {
+                    activity = null
+                    paused = true
+                    returning = false
+                    changed()
+                }
+            }
+        }
     }
 
     private fun autoStop(reason: String) {

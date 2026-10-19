@@ -138,6 +138,8 @@ object BebopCmd {
     fun maxRotationSpeed(degps: Float) = cmd(1, 11, 1, ArArgs().f32(degps))
 
     // ardrone3.MediaStreaming
+    // MediaRecord : vidéo (0 = démarrer, 1 = arrêter) et photo, sur la mémoire du Bebop
+    fun videoRecord(start: Boolean) = cmd(1, 7, 3, ArArgs().i32(if (start) 0 else 1))
     fun videoEnable(on: Boolean) = cmd(1, 21, 0, ArArgs().u8(if (on) 1 else 0))
 
     // Événements reçus

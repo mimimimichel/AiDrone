@@ -12,7 +12,9 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -62,6 +64,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -225,6 +229,15 @@ fun MainScreen(vm: MainViewModel) {
         )
 
         // Plan de l'IA pour l'objectif donné
+        s.activity?.let { act ->
+            Text(
+                (if (s.recording) "🔴 " else "") + "⏳ " + act + " — dis « stop » pour arrêter",
+                color = Color(0xFFFFD54F),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+            )
+        }
         s.plan?.let { PlanCard(it, vm) }
 
         // Proposition en attente
@@ -543,6 +556,8 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
     var model by remember { mutableStateOf(vm.model) }
     var confirm by remember { mutableStateOf(s.confirm) }
     var speak by remember { mutableStateOf(s.speak) }
+    var showJournal by remember { mutableStateOf(false) }
+    if (showJournal) JournalDialog(vm) { showJournal = false }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Réglages") },
@@ -632,6 +647,19 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
                 }
                 SettingSwitch("Le drone parle à voix haute", speak) { speak = it }
                 SettingSwitch("Voix de robot", robotVoice) { robotVoice = it }
+                SettingSwitch("🎬 Filmer chaque vol en entier (carte mémoire du drone)", s.autoRecord) { vm.changeAutoRecord(it) }
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("📔 Journal des vols (résumés et photos)", modifier = Modifier.weight(1f))
+                    TextButton(onClick = { showJournal = true }) { Text("Ouvrir") }
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("🧠 Mémoire de l'IA : ${s.memoryCount} souvenir${if (s.memoryCount > 1) "s" else ""}", modifier = Modifier.weight(1f))
+                    TextButton(onClick = { vm.clearMemory() }, enabled = s.memoryCount > 0) { Text("Effacer") }
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("📍 Points marqués sur la carte : ${s.waypointCount}", modifier = Modifier.weight(1f))
+                    TextButton(onClick = { vm.clearWaypoints() }) { Text("Effacer") }
+                }
                 Text(
                     "Autres limites : 90° max par action, 40 actions max, " +
                         "atterrissage automatique sous 25 % de batterie. Dis « stop » ou « atterris » à tout moment.",
@@ -639,6 +667,50 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 8.dp),
                 )
+            }
+        },
+    )
+}
+
+/** Les vols enregistrés : titre, résumé par l'IA, photos. */
+@Composable
+private fun JournalDialog(vm: MainViewModel, onDismiss: () -> Unit) {
+    var flights by remember { mutableStateOf<List<com.bebopia.app.core.ai.FlightEntry>?>(null) }
+    LaunchedEffect(Unit) {
+        flights = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { vm.flights() }.getOrDefault(emptyList()) }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("📔 Journal des vols") },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Fermer") } },
+        text = {
+            val list = flights
+            when {
+                list == null -> CircularProgressIndicator()
+                list.isEmpty() -> Text("Aucun vol enregistré pour l'instant. Chaque vol (du décollage à l'atterrissage) est ajouté ici, avec un résumé de l'IA.")
+                else -> LazyColumn(Modifier.heightIn(max = 520.dp)) {
+                    items(list) { f ->
+                        Column(Modifier.padding(vertical = 8.dp)) {
+                            Text(f.title, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text(f.summary, fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp))
+                            if (f.photos.isNotEmpty()) {
+                                Row(Modifier.horizontalScroll(rememberScrollState()).padding(top = 6.dp)) {
+                                    f.photos.take(12).forEach { file ->
+                                        val bmp = remember(file) {
+                                            runCatching {
+                                                android.graphics.BitmapFactory.decodeFile(file.path, android.graphics.BitmapFactory.Options().apply { inSampleSize = 4 })
+                                            }.getOrNull()
+                                        }
+                                        bmp?.let {
+                                            Image(it.asImageBitmap(), contentDescription = file.name, contentScale = ContentScale.Crop,
+                                                modifier = Modifier.padding(end = 4.dp).size(96.dp, 54.dp).clip(RoundedCornerShape(4.dp)))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         },
     )

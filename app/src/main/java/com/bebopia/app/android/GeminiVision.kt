@@ -87,6 +87,44 @@ class GeminiVision(
         throw IOException("vérification de trajectoire impossible (${last?.message})")
     }
 
+    /** Texte seul (résumé de vol). Essaie les modèles Flash l'un après l'autre. */
+    fun text(prompt: String): String {
+        val key = apiKey()
+        if (key.isBlank()) throw IllegalStateException("clé Gemini manquante")
+        var last: Exception? = null
+        for (model in MODELS.drop(1)) {
+            val body = JSONObject()
+                .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", prompt)))))
+                .put("generationConfig", JSONObject().put("temperature", 0.4).apply {
+                    if (model.startsWith("gemini-3")) put("thinkingConfig", JSONObject().put("thinkingLevel", "LOW"))
+                })
+            val conn = open(URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$key"))
+            try {
+                conn.requestMethod = "POST"
+                conn.connectTimeout = 10_000
+                conn.readTimeout = 40_000
+                conn.doOutput = true
+                conn.setRequestProperty("content-type", "application/json")
+                conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+                val code = conn.responseCode
+                val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+                if (code !in 200..299) throw IOException("Gemini $code")
+                val parts = JSONObject(text).optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
+                return buildString {
+                    if (parts != null) for (i in 0 until parts.length()) {
+                        val p = parts.optJSONObject(i) ?: continue
+                        if (!p.optBoolean("thought")) append(p.optString("text"))
+                    }
+                }
+            } catch (e: Exception) {
+                last = e
+            } finally {
+                conn.disconnect()
+            }
+        }
+        throw IOException("résumé impossible (${last?.message})")
+    }
+
     /** Appel générique : image + consigne, réponse JSON selon [schema]. */
     private fun generate(model: String, key: String, jpeg: String, prompt: String, schema: JSONObject): JSONObject {
         val gen = JSONObject().put("responseMimeType", "application/json").put("responseJsonSchema", schema).put("temperature", 0.1)

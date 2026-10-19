@@ -154,6 +154,83 @@ class DjiDrone(
         return base
     }
 
+
+    // ---- position, regard, vitesses continues -------------------------------------------------
+    override fun compass(): Double = link.heading()
+    override fun syncHeading() = setHeadingFromCompass(link.heading())
+    override fun takeoffHeading(): Double = link.heading()
+    override val hasGps: Boolean get() = link.position() != null && link.home() != null
+    override fun gps(): Pair<Double, Double>? = link.position()?.let { it[0] to it[1] }
+    override fun homeGps(): Pair<Double, Double>? = link.home()?.let { it[0] to it[1] }
+
+    override fun positionNE(): Pair<Double, Double> {
+        val p = link.position()
+        val h = link.home()
+        if (p == null || h == null) return super.positionNE()
+        val n = (p[0] - h[0]) * 111320.0
+        val e = (p[1] - h[1]) * 111320.0 * kotlin.math.cos(Math.toRadians(h[0]))
+        return n to e
+    }
+
+    override fun gimbalPitch(): Double = link.gimbalPitchNow()
+
+    override fun lookHeading(): Double {
+        val c = droneYawCenter
+        return if (headFollow && headRecent && c != null) com.bebopia.app.core.norm180(c + (headYaw - headYawCenter)) else link.heading()
+    }
+
+    override fun signalQuality(): Int? = link.signalQuality().takeIf { it >= 0 }
+    override val recording: Boolean get() = link.recording()
+    override fun startRecording(): String? = call(8) { link.record(true, it) }
+    override fun stopRecording(): String? = call(5) { link.record(false, it) }
+
+    override val supportsVelocity: Boolean get() = true
+    @Volatile private var vel = DoubleArray(4)
+    @Volatile private var velUntil = 0L
+    private var velLoop: Thread? = null
+
+    override fun velocity(forward: Double, right: Double, up: Double, yawRate: Double, holdMs: Long) {
+        if (manual) throw IllegalStateException("le pilote a repris la main avec la radiocommande")
+        val f = if (forwardBlocked()) minOf(forward, 0.0) else forward
+        cancel = false
+        vel = doubleArrayOf(f.coerceIn(-8.0, 8.0), right.coerceIn(-8.0, 8.0), up.coerceIn(-2.0, 2.0), yawRate.coerceIn(-100.0, 100.0))
+        velUntil = System.currentTimeMillis() + holdMs
+        moving = true
+        setForward(f > 0.2)
+        synchronized(this) {
+            if (velLoop == null) velLoop = Thread({ velocityLoop() }, "vitesse").apply { isDaemon = true; start() }
+        }
+    }
+
+    override fun stopVelocity() {
+        if (velUntil != 0L) velUntil = 1L
+    }
+
+    private fun velocityLoop() {
+        var last = System.currentTimeMillis()
+        while (true) {
+            Thread.sleep(100)
+            val now = System.currentTimeMillis()
+            val dt = (now - last) / 1000.0
+            last = now
+            val until = velUntil
+            if (until == 0L) continue
+            if (cancel || now > until || manual || !link.flying()) {
+                velUntil = 0L
+                setForward(false)
+                if (!manual) repeat(8) { link.sendSticks(0f, 0f, 0f, 0f); Thread.sleep(100) }
+                moving = false
+                droneYawCenter = link.heading()
+                headYawCenter = headYaw
+                continue
+            }
+            val v = vel
+            link.sendSticks(v[1].toFloat(), v[0].toFloat(), v[3].toFloat(), v[2].toFloat())
+            syncHeading()
+            integrate(v[0], v[1], v[2], v[3], dt)
+        }
+    }
+
     override fun battery(): Int? = link.battery()
     override fun altitude(): Double = link.altitude().toDouble()
 

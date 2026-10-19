@@ -109,6 +109,9 @@ public class DjiLink {
         m.put("vps", vps);
         m.put("imuPreheating", imuPreheating);
         m.put("lowBattery", lowBattery);
+        m.put("rec", recording);
+        int q = signalQuality();
+        if (q >= 0) m.put("signal", q);
         // Position GPS (pour la mini-carte du casque)
         if (!Double.isNaN(lat) && Math.abs(lat) > 0.0001 && satellites >= 4) { m.put("lat", lat); m.put("lon", lon); }
         if (homeSet && !Double.isNaN(homeLat) && Math.abs(homeLat) > 0.0001) { m.put("homeLat", homeLat); m.put("homeLon", homeLon); }
@@ -127,6 +130,74 @@ public class DjiLink {
 
     /** Cap du drone (boussole), en degrés de -180 à 180. */
     public double heading() { return heading; }
+
+    /** Inclinaison de la nacelle (°, négatif = vers le bas). */
+    public double gimbalPitchNow() { return gimbalPitchDeg; }
+
+    /** Position GPS fiable (assez de satellites) : {lat, lon}, sinon null. */
+    public double[] position() {
+        if (Double.isNaN(lat) || Math.abs(lat) < 0.0001 || satellites < 6) return null;
+        return new double[] { lat, lon };
+    }
+
+    public double[] home() {
+        if (!homeSet || Double.isNaN(homeLat) || Math.abs(homeLat) < 0.0001) return null;
+        return new double[] { homeLat, homeLon };
+    }
+
+    private volatile int upQuality = -1, downQuality = -1;
+    private volatile long qualityAt = 0;
+
+    /** Qualité de la liaison (0 à 100, la plus faible des deux voies), -1 si inconnue. */
+    public int signalQuality() {
+        if (System.currentTimeMillis() - qualityAt > 5000) return -1;
+        if (upQuality < 0) return downQuality;
+        if (downQuality < 0) return upQuality;
+        return Math.min(upQuality, downQuality);
+    }
+
+    private volatile boolean recording = false;
+    public boolean recording() { return recording; }
+
+    /** Enregistrement vidéo sur la carte SD du drone. */
+    public void record(final boolean start, final Done d) {
+        BaseProduct p = DJISDKManager.getInstance().getProduct();
+        final dji.sdk.camera.Camera cam = p == null ? null : p.getCamera();
+        if (cam == null) {
+            if (d != null) d.done("caméra indisponible");
+            return;
+        }
+        if (!start) {
+            cam.stopRecordVideo(cb(new Done() {
+                @Override
+                public void done(String e) {
+                    if (e == null) recording = false;
+                    if (d != null) d.done(e);
+                }
+            }));
+            return;
+        }
+        final CommonCallbacks.CompletionCallback go = new CommonCallbacks.CompletionCallback() {
+            @Override
+            public void onResult(DJIError e0) {
+                cam.startRecordVideo(cb(new Done() {
+                    @Override
+                    public void done(String e) {
+                        if (e == null) recording = true;
+                        if (d != null) d.done(e);
+                    }
+                }));
+            }
+        };
+        // Mavic Mini et drones récents : « flat mode » ; anciens : mode caméra.
+        cam.setFlatMode(SettingsDefinitions.FlatCameraMode.VIDEO_NORMAL, new CommonCallbacks.CompletionCallback() {
+            @Override
+            public void onResult(DJIError e) {
+                if (e == null) go.onResult(null);
+                else cam.setMode(SettingsDefinitions.CameraMode.RECORD_VIDEO, go);
+            }
+        });
+    }
 
     /** Nacelle vers un angle, sans attendre la réponse (pour suivre la tête en continu). */
     public void gimbalPitchFast(float degrees) {
@@ -313,6 +384,16 @@ public class DjiLink {
                         if (li != null) li.onPilotSticks();
                     }
                 }
+            });
+        }
+        if (a.getAirLink() != null) {
+            a.getAirLink().setUplinkSignalQualityCallback(new dji.common.airlink.SignalQualityCallback() {
+                @Override
+                public void onUpdate(int q) { upQuality = q; qualityAt = System.currentTimeMillis(); }
+            });
+            a.getAirLink().setDownlinkSignalQualityCallback(new dji.common.airlink.SignalQualityCallback() {
+                @Override
+                public void onUpdate(int q) { downQuality = q; qualityAt = System.currentTimeMillis(); }
             });
         }
         if (a.getGimbal() != null) {

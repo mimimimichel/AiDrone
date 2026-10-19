@@ -4,7 +4,7 @@ package com.bebopia.app.core.ai
 object LivePrompt {
 
     val SYSTEM = """
-Tu es l'IA embarquée d'un drone Parrot Bebop 2. Tu parles EN DIRECT, à voix haute, en français, avec ton pilote,
+Tu es l'IA embarquée d'un drone (Parrot Bebop 2 ou DJI Mavic Mini). Tu parles EN DIRECT, à voix haute, en français, avec ton pilote,
 et tu reçois environ une image par seconde de la caméra frontale du drone (en simulation : la caméra du téléphone).
 
 Ta façon de parler : comme une vraie conversation. Phrases courtes et naturelles, une ou deux à la fois,
@@ -53,6 +53,21 @@ Si le pilote reprend la main avec sa radiocommande, tes actions sont refusées j
 
 Mode confiance : quand le pilote l'active, tes déplacements et tes plans ne lui sont plus soumis. Enchaîne alors
 les actions de toi-même jusqu'à atteindre l'objectif, en restant prudent : petits pas, et regarde l'image après chaque action.
+
+Autres capacités (chacune a son outil ; elles sont longues : préviens le pilote, puis commente le résultat) :
+- « Va là », « va là-bas » quand le pilote regarde un endroit (casque) ou montre ce qui est au centre de l'image : go_to_look.
+  Le point visé est au sol, au centre de la caméra. Si la caméra regarde à l'horizontale, dis-lui de baisser la tête vers l'endroit.
+- « Suis le chien », « suis-moi », « suis la voiture » : follow_target. Le drone garde la cible au centre et à la même distance
+  jusqu'à « stop », la perte de la cible ou la limite du rayon.
+- « Marque ce point », « retiens cet endroit » : mark_point (avec un nom court si le pilote en donne un).
+  « Retourne au point 2 », « va au portail » : go_to_point. « Fais le tour des points » : tour_points. Les points s'affichent sur la carte du casque.
+- Plans de cinéma, filmés sur la carte du drone : film_shot. « Fais une orbite autour de la maison » (orbite), « fais un dronie » (recule en
+  montant), « un panorama », « une révélation » (caméra qui se relève en avançant), « une fusée » (monte caméra vers le sol).
+  Pour une orbite, mets d'abord le sujet au centre de l'image. Pour « fais un beau plan de… », choisis le plan qui convient et dis lequel.
+- « Rentre par le même chemin » : retrace_path. L'application le fait aussi toute seule si la batterie ou le signal radio baissent.
+- Ta mémoire : quand tu apprends quelque chose d'utile pour les prochains vols (où se trouve un objet, un obstacle du lieu,
+  une préférence du pilote) ou quand il te dit « retiens que… », appelle remember. Tes souvenirs te sont donnés au début de la conversation.
+  Chaque vol est aussi enregistré dans un journal (photos et résumé) consultable dans l'application.
 
 Résultats possibles de drone_action :
 - « en attente » : le pilote doit valider. Dis-lui en une phrase ce que tu proposes et attends.
@@ -172,6 +187,62 @@ Les messages entre crochets [Message de l'application…] viennent de l'applicat
                 ),
                 "required" to listOf("success", "summary"),
             ),
+        ),
+        mapOf(
+            "name" to "go_to_look",
+            "description" to "Va au point au sol situé au centre de la caméra (là où regarde le pilote dans le casque). Garde l'altitude.",
+            "parameters" to mapOf("type" to "OBJECT", "properties" to mapOf(
+                "vu" to mapOf("type" to "STRING", "description" to "Ce qu'il y a au point visé (une phrase)."),
+            )),
+        ),
+        mapOf(
+            "name" to "follow_target",
+            "description" to "Suit une cible en mouvement (personne, animal, véhicule) en la gardant au centre et à distance constante.",
+            "parameters" to mapOf("type" to "OBJECT", "properties" to mapOf(
+                "target" to mapOf("type" to "STRING", "description" to "La cible, précise (ex. « chien noir », « personne en veste rouge »)."),
+                "minutes" to num("Durée maximale (vide = 10 min)."),
+            ), "required" to listOf("target")),
+        ),
+        mapOf(
+            "name" to "mark_point",
+            "description" to "Enregistre la position actuelle du drone comme point sur la carte (gardé pour les prochains vols si GPS).",
+            "parameters" to mapOf("type" to "OBJECT", "properties" to mapOf(
+                "label" to mapOf("type" to "STRING", "description" to "Nom court du point (ex. « portail », « vue sur le lac »). Vide = numéro."),
+            )),
+        ),
+        mapOf(
+            "name" to "go_to_point",
+            "description" to "Va à un point marqué (par son numéro ou son nom), en vérifiant les obstacles en route.",
+            "parameters" to mapOf("type" to "OBJECT", "properties" to mapOf(
+                "point" to mapOf("type" to "STRING", "description" to "Numéro (« 2 ») ou nom du point."),
+            ), "required" to listOf("point")),
+        ),
+        mapOf(
+            "name" to "tour_points",
+            "description" to "Passe par tous les points marqués, dans l'ordre.",
+        ),
+        mapOf(
+            "name" to "film_shot",
+            "description" to "Plan de cinéma automatique, filmé sur la carte mémoire du drone.",
+            "parameters" to mapOf("type" to "OBJECT", "properties" to mapOf(
+                "shot" to mapOf("type" to "STRING", "enum" to listOf("orbite", "dronie", "panorama", "revelation", "fusee")),
+                "distance_m" to num("Orbite : rayon ; dronie : recul ; révélation : avancée ; fusée : montée (vide = automatique)."),
+                "record" to mapOf("type" to "BOOLEAN", "description" to "false pour ne pas enregistrer la vidéo (par défaut : enregistrée)."),
+            ), "required" to listOf("shot")),
+        ),
+        mapOf(
+            "name" to "retrace_path",
+            "description" to "Rentre au point de départ en refaisant le chemin du vol à l'envers.",
+            "parameters" to mapOf("type" to "OBJECT", "properties" to mapOf(
+                "land" to mapOf("type" to "BOOLEAN", "description" to "true pour atterrir à l'arrivée."),
+            )),
+        ),
+        mapOf(
+            "name" to "remember",
+            "description" to "Retient une information pour les prochains vols (gardée avec la position GPS si disponible).",
+            "parameters" to mapOf("type" to "OBJECT", "properties" to mapOf(
+                "note" to mapOf("type" to "STRING", "description" to "Ce qu'il faut retenir, en une phrase autonome (ex. « La tulipe rouge est sur le rebord de la fenêtre du salon. »)."),
+            ), "required" to listOf("note")),
         ),
         mapOf(
             "name" to "drone_status",

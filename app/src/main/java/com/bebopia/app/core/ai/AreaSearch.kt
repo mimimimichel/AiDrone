@@ -41,6 +41,9 @@ class AreaSearch(
 
     private class Abort(msg: String) : Exception(msg)
 
+    /** Carte : zones regardées et repères (cible, pistes). */
+    var nav: Navigator? = null
+
     private var plan = Plan("", emptyList())
     private var target = ""
     private var sightings = 0
@@ -209,6 +212,7 @@ class AreaSearch(
     // ---- observation ----------------------------------------------------------------------------
     /** Tour complet (4 vues à 90°). Renvoie la cible si elle est vue, avec le cap auquel elle a été vue. */
     private fun scan(): Detection? {
+        nav?.addCoverage(if (simulation) 1.0 else (drone.altitude() * 1.6).coerceIn(3.0, 60.0))
         drone.tiltCamera(SCAN_TILT)
         if (simulation) report("(Simulation) Incline un peu le téléphone vers le bas")
         for (i in 0 until 4) {
@@ -231,6 +235,7 @@ class AreaSearch(
         report("🤔 Peut-être « $target » : ${d.description.take(80)} — je vais voir")
         turn(offset(d))
         val dist = groundDistance(d)
+        nav?.addPin("piste ?", false, dist)
         if (dist != null && dist > 3) {
             drone.tiltCamera(TRAVEL_TILT)
             val go = minOf(dist * 0.6, drone.limits.missionStepM * 2)
@@ -306,6 +311,7 @@ class AreaSearch(
             }
             dist = groundDistance(d)
         }
+        nav?.addPin(target, true, dist)
         val where = "à environ %.0f m du départ, cap %d°".format(hypot(drone.x, drone.y), drone.heading.roundToInt())
         val howFar = dist?.let { " ; cible à environ %.0f m devant moi".format(it) } ?: ""
         setStep(3, StepState.DONE, d.description.take(80))

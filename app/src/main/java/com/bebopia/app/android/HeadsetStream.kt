@@ -400,6 +400,8 @@ function draw(){
   if(s.paused)warns.push([WARN,'IA EN PAUSE']);
   if(s.confirm===false)warns.push([WARN,'MODE CONFIANCE']);
   if(s.manual)warns.push([CYAN,'MANUEL']);
+  if(s.rec||tel.rec)warns.unshift([RED,'● REC']);
+  if(s.activity)warns.unshift([WARN,String(s.activity).toUpperCase().slice(0,28)]);
   let wx=W-28;
   for(const [c,w] of warns.slice(0,4).reverse()){g.font='bold 22px sans-serif';const ww=g.measureText(w).width+28;wx-=ww;
     g.fillStyle=c;rr(wx,40,ww,44,8);g.fill();t(w,wx+ww/2,70,22,'#000','center',true);wx-=10;}
@@ -437,6 +439,7 @@ function drawHUD(s,tel){
   g.restore();
   // Réticule fixe
   g.strokeStyle=WARN;g.lineWidth=4;g.beginPath();g.moveTo(cx-70,cy);g.lineTo(cx-25,cy);g.lineTo(cx-12,cy+14);g.lineTo(cx,cy);g.lineTo(cx+12,cy+14);g.lineTo(cx+25,cy);g.lineTo(cx+70,cy);g.stroke();
+  {const ad=aimDist(s,tel);if(ad!==null&&ad<500){g.font='bold 24px sans-serif';g.textAlign='left';g.fillStyle=WARN;g.fillText('⌖ '+(ad<10?f1(ad):Math.round(ad))+' m (« va là »)',cx+80,cy+40);}}
   // Indicateur de roulis
   g.save();g.translate(cx,cy);g.strokeStyle=HUD;g.lineWidth=2;
   g.beginPath();g.arc(0,0,300,-Math.PI/2-0.6,-Math.PI/2+0.6);g.stroke();
@@ -504,7 +507,7 @@ function drawLeft(s,tel){
   t(tel.lowBattery?'Seuil d\'alerte atteint':'',x+18,VY+178,20,RED);
   // Navigation
   const ny=VY+202;panel(x,ny,w,270,'NAVIGATION');
-  drawMap(g,x+90,ny+140,72,tel);
+  drawMap(g,x+90,ny+140,72,tel,s.nav);
   const hd=num(tel.homeDist,num(s.dist,0));
   t('Départ',x+172,ny+90,20,GREY);
   t(f1(hd)+' m',x+172,ny+130,34,CYAN,'left',true);
@@ -560,43 +563,75 @@ function tile(z,x,y){const k=z+'/'+x+'/'+y;let im=tiles.get(k);
 function proj(lat,lon,z){const n=Math.pow(2,z)*256,r=lat*Math.PI/180;
   return [(lon+180)/360*n,(1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*n];}
 // Carte ronde centrée sur le drone, orientée dans sa direction (le haut = devant le drone).
-function drawMap(c,cx,cy,R,tel){
+function drawMap(c,cx,cy,R,tel,nav){
+  nav=nav||{};
   c.save();c.beginPath();c.arc(cx,cy,R,0,Math.PI*2);c.closePath();
   c.fillStyle='rgba(10,20,15,.85)';c.fill();c.clip();
-  const lat=tel.lat,lon=tel.lon;
-  if(typeof lat!=='number'||typeof lon!=='number'){
-    c.font='bold 22px sans-serif';c.textAlign='center';c.fillStyle=GREY;c.fillText('PAS DE GPS',cx,cy+8);c.restore();
-    c.strokeStyle=CYAN;c.lineWidth=3;c.beginPath();c.arc(cx,cy,R,0,Math.PI*2);c.stroke();return;}
-  // Zoom : le point de départ et le pilote restent visibles
-  let far=20;
-  for(const [a,b] of [[tel.homeLat,tel.homeLon],[tel.pilotLat,tel.pilotLon]]){
+  const lat=tel.lat,lon=tel.lon, gps=typeof lat==='number'&&typeof lon==='number';
+  const pos=nav.pos||[0,0], hd=(typeof tel.heading==='number'?tel.heading:0)*Math.PI/180;
+  const near=(p)=>Math.hypot(p[0]-pos[0],p[1]-pos[1]);
+  // Zoom : départ, pilote, points marqués et trace restent visibles
+  let far=gps?20:3;
+  far=Math.max(far,near([0,0]));
+  for(const w of (nav.wps||[]))far=Math.max(far,Math.min(near(w),gps?400:30));
+  for(const q of (nav.pins||[]))far=Math.max(far,Math.min(near(q),gps?400:30));
+  if(gps)for(const [a,b] of [[tel.homeLat,tel.homeLon],[tel.pilotLat,tel.pilotLon]]){
     if(typeof a==='number'&&typeof b==='number'){const dy=(a-lat)*111320,dx=(b-lon)*111320*Math.cos(lat*Math.PI/180);far=Math.max(far,Math.hypot(dx,dy));}}
-  let z=19;const mpp=zz=>156543.03*Math.cos(lat*Math.PI/180)/Math.pow(2,zz);
-  while(z>12&&far/mpp(z)>R*0.8)z--;
-  const [px,py]=proj(lat,lon,z), hd=(typeof tel.heading==='number'?tel.heading:0)*Math.PI/180;
+  let z=19,sc;const mpp=zz=>156543.03*Math.cos((gps?lat:45)*Math.PI/180)/Math.pow(2,zz);
   c.translate(cx,cy);c.rotate(-hd);
-  const span=R*1.5;
-  for(let tx=Math.floor((px-span)/256);tx<=Math.floor((px+span)/256);tx++)
-    for(let ty=Math.floor((py-span)/256);ty<=Math.floor((py+span)/256);ty++){
-      const im=tile(z,tx,ty);if(im)c.drawImage(im,tx*256-px,ty*256-py,256,256);}
-  function mark(a,b,color,label){if(typeof a!=='number'||typeof b!=='number')return;const [x,y]=proj(a,b,z);
-    c.save();c.translate(x-px,y-py);c.rotate(hd);c.fillStyle=color;c.strokeStyle='#000';c.lineWidth=3;
-    c.beginPath();c.arc(0,0,label?13:8,0,Math.PI*2);c.fill();c.stroke();
-    if(label){c.fillStyle='#000';c.font='bold 16px sans-serif';c.textAlign='center';c.fillText(label,0,6);}c.restore();}
-  mark(tel.homeLat,tel.homeLon,CYAN,'H');
-  mark(tel.pilotLat,tel.pilotLon,'#448AFF','');
+  if(gps){
+    while(z>12&&far/mpp(z)>R*0.8)z--;
+    sc=1/mpp(z);
+    const [px,py]=proj(lat,lon,z), span=R*1.5;
+    for(let tx=Math.floor((px-span)/256);tx<=Math.floor((px+span)/256);tx++)
+      for(let ty=Math.floor((py-span)/256);ty<=Math.floor((py+span)/256);ty++){
+        const im=tile(z,tx,ty);if(im)c.drawImage(im,tx*256-px,ty*256-py,256,256);}
+  }else{
+    sc=R*0.8/far;
+    // Quadrillage d'un mètre (ou plus) pour la carte locale
+    let grid=1;while(grid*sc<18)grid*=5;
+    c.strokeStyle='rgba(124,252,154,.15)';c.lineWidth=1;
+    const ox=-pos[1]*sc, oy=pos[0]*sc;
+    for(let k=-Math.ceil(1.5*R/(grid*sc))-1;k<=Math.ceil(1.5*R/(grid*sc))+1;k++){
+      const gx=(Math.round(pos[1]/grid)+k)*grid*sc+ox, gy=-(Math.round(pos[0]/grid)+k)*grid*sc+oy;
+      c.beginPath();c.moveTo(gx,-R*1.5);c.lineTo(gx,R*1.5);c.stroke();c.beginPath();c.moveTo(-R*1.5,gy);c.lineTo(R*1.5,gy);c.stroke();}
+  }
+  const P=(n,e)=>[(e-pos[1])*sc,-(n-pos[0])*sc];
+  // Zones déjà fouillées
+  for(const q of (nav.cov||[])){const [x,y]=P(q[0],q[1]);c.fillStyle='rgba(124,252,154,.16)';c.beginPath();c.arc(x,y,Math.max(3,q[2]*sc),0,Math.PI*2);c.fill();}
+  // Trace du vol
+  const tr=nav.track||[];
+  if(tr.length>1){c.strokeStyle='rgba(255,213,79,.85)';c.lineWidth=3;c.setLineDash([8,6]);c.beginPath();
+    tr.forEach((q,i)=>{const [x,y]=P(q[0],q[1]);if(i)c.lineTo(x,y);else c.moveTo(x,y);});
+    const [x,y]=P(pos[0],pos[1]);c.lineTo(x,y);c.stroke();c.setLineDash([]);}
+  function dot(x,y,color,label,r){c.save();c.translate(x,y);c.rotate(hd);c.fillStyle=color;c.strokeStyle='#000';c.lineWidth=3;
+    c.beginPath();c.arc(0,0,r,0,Math.PI*2);c.fill();c.stroke();
+    if(label){c.fillStyle='#000';c.font='bold '+Math.round(r*1.2)+'px sans-serif';c.textAlign='center';c.fillText(label,0,r*0.42);}c.restore();}
+  function mark(a,b,color,label){if(typeof a!=='number'||typeof b!=='number')return;const [x,y]=proj(a,b,z),[px,py]=proj(lat,lon,z);
+    dot(x-px,y-py,color,label,label?13:8);}
+  // Repères : cibles trouvées (rouge), pistes (orange)
+  for(const q of (nav.pins||[])){const [x,y]=P(q[0],q[1]);dot(x,y,q[3]?RED:'#FF9800','!',11);}
+  // Points marqués
+  for(const w of (nav.wps||[])){const [x,y]=P(w[0],w[1]);dot(x,y,'#FFD54F',String(w[2]),12);}
+  // Départ et pilote
+  if(nav.pos){const [x,y]=P(0,0);dot(x,y,CYAN,'H',13);}else if(gps)mark(tel.homeLat,tel.homeLon,CYAN,'H');
+  if(gps)mark(tel.pilotLat,tel.pilotLon,'#448AFF','');
+  c.restore();c.save();
   // Nord sur le bord
-  c.save();c.rotate(0);c.fillStyle='#fff';c.font='bold 20px sans-serif';c.textAlign='center';c.strokeStyle='#000';c.lineWidth=4;
-  c.strokeText('N',0,-R+24);c.fillText('N',0,-R+24);c.restore();
-  c.restore();
+  const nx=cx+Math.sin(-hd)*(R-22), ny=cy-Math.cos(-hd)*(R-22);
+  c.fillStyle='#fff';c.font='bold 20px sans-serif';c.textAlign='center';c.strokeStyle='#000';c.lineWidth=4;
+  c.strokeText('N',nx,ny+7);c.fillText('N',nx,ny+7);c.restore();
   // Drone au centre, pointe vers le haut (= sa direction)
   c.fillStyle=WARN;c.strokeStyle='#000';c.lineWidth=3;c.beginPath();c.moveTo(cx,cy-18);c.lineTo(cx-12,cy+12);c.lineTo(cx,cy+5);c.lineTo(cx+12,cy+12);c.closePath();c.fill();c.stroke();
   c.strokeStyle=CYAN;c.lineWidth=3;c.beginPath();c.arc(cx,cy,R,0,Math.PI*2);c.stroke();
   // Échelle et crédit des images
   c.font='bold 16px sans-serif';c.textAlign='center';c.fillStyle='#fff';c.strokeStyle='#000';c.lineWidth=4;
-  const scale='rayon '+Math.round(mpp(z)*R)+' m';c.strokeText(scale,cx,cy+R-14);c.fillText(scale,cx,cy+R-14);
-  c.font='11px sans-serif';c.fillStyle=GREY;c.fillText('Imagerie © Esri',cx,cy+R+16);
+  const rm=R/sc, scale='rayon '+(rm<10?rm.toFixed(1).replace('.',','):Math.round(rm))+' m';c.strokeText(scale,cx,cy+R-14);c.fillText(scale,cx,cy+R-14);
+  c.font='11px sans-serif';c.fillStyle=GREY;c.fillText(gps?'Imagerie © Esri':'sans GPS : position estimée',cx,cy+R+16);
 }
+
+/** Distance au sol du point visé (centre de l'image), d'après l'altitude et la nacelle. */
+function aimDist(s,tel){const gp=num(tel.gimbal,0), a=num(s.alt,0);if(gp>-6||a<0.5)return null;return a/Math.tan(-gp*Math.PI/180);}
 
 // ======================= VR : la caméra en grand, infos discrètes dans les coins (style lunettes FPV) =======================
 const V=document.createElement('canvas');V.width=1920;V.height=1080;
@@ -615,6 +650,9 @@ function drawOSD(){
   tx((typeof tel.sats==='number'?'🛰 '+tel.sats+' sat':'')+(s.guardOn?'   🛡':''),w-60,140,28,num(tel.sats,0)>=8?HUD:WARN,'right');
   const ia=s.manual?['🕹 MANUEL',CYAN]:s.paused?['IA EN PAUSE',WARN]:[(s.confirm===false?'🤝 IA SEULE':'✋ IA (je valide)'),HUD];
   tx(ia[0],w-60,186,30,ia[1],'right',true);
+  if(s.activity)tx('⏳ '+s.activity,w-60,232,28,WARN,'right',true);
+  if(s.rec||tel.rec){o.fillStyle=RED;o.beginPath();o.arc(cx-70,210,12,0,Math.PI*2);o.fill();tx('REC',cx-50,220,28,RED,'left',true);}
+  {const ad=aimDist(s,tel);if(ad!==null&&ad<500)tx('⌖ '+(ad<10?f1(ad):Math.round(ad))+' m',cx+70,cy+46,30,WARN,'left',true);}
   // Cap
   const hd=num(tel.heading,0), tw=640, ppx=tw/90, ty=70;
   o.strokeStyle='rgba(124,252,154,.9)';o.lineWidth=3;
@@ -632,7 +670,7 @@ function drawOSD(){
   tx(f1(s.alt)+' m',w-120,cy+12,44,num(s.alt,0)>num(s.ceiling,99)-0.3?RED:HUD,'right',true);tx('ALT  (max '+Math.round(num(s.ceiling,3))+')',w-120,cy-36,22,GREY,'right',true);
   const vs=num(tel.vSpeed,0);if(Math.abs(vs)>0.1)tx((vs>0?'▲ ':'▼ ')+f1(Math.abs(vs)),w-120,cy+60,28,WARN,'right',true);
   // Bas gauche : mini-carte et distance du départ
-  drawMap(o,200,h-230,150,tel);
+  drawMap(o,200,h-230,150,tel,s.nav);
   tx('H '+f1(num(tel.homeDist,num(s.dist,0)))+' m',50,h-400,36,CYAN,'left',true);
   // Bas droite : nacelle, détecteur
   tx('🎥 '+Math.round(num(tel.gimbal,0))+'°',w-60,h-170,32,HUD,'right',true);

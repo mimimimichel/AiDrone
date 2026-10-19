@@ -17,6 +17,12 @@ import com.bebopia.app.dji.DjiDrone
 import com.bebopia.app.dji.DjiLink
 import android.graphics.SurfaceTexture
 import com.bebopia.app.core.ai.AreaSearch
+import com.bebopia.app.core.ai.FlightEntry
+import com.bebopia.app.core.ai.FlightLog
+import com.bebopia.app.core.ai.Follower
+import com.bebopia.app.core.ai.Memory
+import com.bebopia.app.core.ai.Navigator
+import com.bebopia.app.core.ai.Shots
 import com.bebopia.app.android.LiveState
 import com.bebopia.app.android.VoiceState
 import com.bebopia.app.android.NetworkRouter
@@ -91,11 +97,17 @@ data class UiState(
     val headsetUrl: String = "",
     val headsetViewers: Int = 0,
     val obstacle: Boolean = false,
+    val memoryCount: Int = 0,
+    val waypointCount: Int = 0,
+    val activity: String? = null,
+    val recording: Boolean = false,
+    val autoRecord: Boolean = false,
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val prefs = app.getSharedPreferences("bebopia", Context.MODE_PRIVATE)
+    private val memory = Memory(java.io.File(app.filesDir, "memoire.json"))
     var apiKey: String
         get() = prefs.getString("api_key", "") ?: ""
         private set(v) = prefs.edit().putString("api_key", v.trim()).apply()
@@ -132,6 +144,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var speak: Boolean
         get() = prefs.getBoolean("speak", true)
         private set(v) = prefs.edit().putBoolean("speak", v).apply()
+    /** Filmer chaque vol en entier sur la carte du drone. */
+    var autoRecord: Boolean
+        get() = prefs.getBoolean("auto_record", false)
+        private set(v) = prefs.edit().putBoolean("auto_record", v).apply()
 
     private val limits = Limits().also {
         it.maxStepM = maxStep
@@ -209,6 +225,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         startDisplayGain()
+        startNavTicks()
         voice.init()
         voice.speakEnabled = speak
         voice.robot = robotVoice
@@ -281,6 +298,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             headsetUrl = headset?.urls()?.firstOrNull() ?: "",
             headsetViewers = headset?.viewerCount ?: 0,
             obstacle = System.currentTimeMillis() - obstacleAt < 3000,
+            memoryCount = memory.size,
+            waypointCount = nav?.waypointCount() ?: 0,
+            activity = a?.activity,
+            recording = d?.recording ?: false,
+            autoRecord = autoRecord,
         )
     }
 
@@ -305,6 +327,82 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             report = { a.addChat(Role.SYSTEM, it) },
             onPlan = { a.missionPlan(it) },
         )
+        // Carte, suivi, cinéma, journal de vol
+        val n = Navigator(d, simulation, shouldStop = { a.paused }, report = { a.addChat(Role.SYSTEM, it) },
+            save = { prefs.edit().putString("waypoints", it).apply() })
+        prefs.getString("waypoints", null)?.let { n.load(it) }
+        n.pathCheck = { fwd -> a.safeForward(fwd) }
+        a.nav = n
+        a.areaSearch?.nav = n
+        nav = n
+        a.follower = Follower(d, eyes, vision, hfovDeg = hfov, simulation = simulation, shouldStop = { a.paused },
+            report = { a.addChat(Role.SYSTEM, it) }, onSeen = { t -> n.addPin(t, true, null) })
+        a.shots = Shots(d, simulation, shouldStop = { a.paused }, report = { a.addChat(Role.SYSTEM, it) },
+            pathCheck = { { fwd: Double -> a.safeForward(fwd) } })
+        val log = FlightLog(
+            java.io.File(getApplication<Application>().filesDir, "vols").also { it.mkdirs() }, d, eyes,
+            summarize = { prompt -> if (geminiKey.isBlank()) null else vision.text(prompt) },
+            onSaved = { summary, title ->
+                memory.add("Vol du $title : $summary", d.homeGps())
+                a.addChat(Role.SYSTEM, "📔 Vol enregistré dans le journal ($title) : $summary")
+            },
+        )
+        a.onLine = { role, text -> log.line(role, text) }
+        a.onSnap = { label -> thread(isDaemon = true) { log.snap(label) } }
+        flightLog = log
+    }
+
+    // ---- carte, journal, mémoire -------------------------------------------------------------
+    @Volatile private var nav: Navigator? = null
+    @Volatile private var flightLog: FlightLog? = null
+    @Volatile private var weakSignalSince = 0L
+    @Volatile private var recordedFlight = false
+
+    /** Une fois par seconde : trace, journal, signal radio, enregistrement du vol. */
+    private fun startNavTicks() {
+        viewModelScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(1000)
+                val d = drone ?: continue
+                runCatching { nav?.tick() }
+                runCatching { flightLog?.tick() }
+                // Filmer tout le vol
+                if (d.flying && autoRecord && !recordedFlight) {
+                    recordedFlight = true
+                    d.startRecording()?.let { sysMessage("Enregistrement du vol impossible : $it") }
+                } else if (!d.flying && recordedFlight) {
+                    recordedFlight = false
+                    if (d.recording) runCatching { d.stopRecording() }
+                }
+                // Signal radio faible loin du départ : retour par le même chemin.
+                val q = d.signalQuality()
+                if (q != null && q < 25 && d.flying && d.distanceFromHome() > 10) {
+                    if (weakSignalSince == 0L) weakSignalSince = System.currentTimeMillis()
+                    else if (System.currentTimeMillis() - weakSignalSince > 4000) {
+                        weakSignalSince = 0L
+                        agent?.autoReturn("signal radio faible ($q %)")
+                    }
+                } else weakSignalSince = 0L
+            }
+        }
+    }
+
+    fun flights(): List<FlightEntry> = flightLog?.list()
+        ?: FlightLog(java.io.File(getApplication<Application>().filesDir, "vols"), SimDrone(limits), Eyes { null }, { null }, { _, _ -> }).list()
+
+    fun clearMemory() {
+        memory.clear()
+        sysMessage("🧠 Mémoire de l'IA effacée.")
+    }
+
+    fun clearWaypoints() {
+        nav?.clearWaypoints() ?: prefs.edit().remove("waypoints").apply()
+        sysMessage("📍 Points de la carte effacés.")
+    }
+
+    fun changeAutoRecord(on: Boolean) {
+        autoRecord = on
+        refresh()
     }
 
     private fun startGuard(d: DroneBase, a: Agent, frames: GrayFrames) {
@@ -496,6 +594,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         agent = null
         drone = null
         video = null
+        nav = null
+        flightLog = null
         mode = Mode.NONE
         a?.stop()
         a?.chat?.let { lines -> synchronized(localChat) { localChat.clear(); localChat.addAll(lines) } }
@@ -567,7 +667,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             apiKey = geminiKey,
             network = { router.cellular },
             eyes = eyes,
-            systemPrompt = LivePrompt.SYSTEM + if (robotVoice) LivePrompt.ROBOT_STYLE else "",
+            systemPrompt = LivePrompt.SYSTEM + (if (robotVoice) LivePrompt.ROBOT_STYLE else "") +
+                memory.promptText(d.gps() ?: pilotLat.takeIf { !it.isNaN() }?.let { it to pilotLon }),
             tools = GeminiLive.toJson(LivePrompt.TOOLS) as JSONArray,
             onTool = { name, args ->
                 when (name) {
@@ -578,7 +679,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         live?.sendFrameNow()
                         mapOf("result" to r, "etat" to d.state())
                     }
+                    "go_to_look", "follow_target", "go_to_point", "tour_points", "film_shot", "retrace_path" -> {
+                        val action = when (name) {
+                            "go_to_look" -> mapOf("type" to "go_look", "vu" to args["vu"])
+                            "follow_target" -> mapOf("type" to "follow", "target" to args["target"], "minutes" to args["minutes"])
+                            "go_to_point" -> mapOf("type" to "goto_point", "point" to args["point"]?.toString())
+                            "tour_points" -> mapOf("type" to "tour")
+                            "film_shot" -> mapOf("type" to "film", "shot" to args["shot"], "distance_m" to args["distance_m"], "record" to (args["record"] != false))
+                            else -> mapOf("type" to "retrace", "land" to (args["land"] == true))
+                        }
+                        (args["vu"] as? String)?.takeIf { it.isNotBlank() }?.let { a.addChat(Role.SYSTEM, "👁 $it") }
+                        val r = a.aiAction(action)
+                        live?.sendFrameNow()
+                        mapOf("result" to r, "etat" to d.state())
+                    }
+                    "mark_point" -> {
+                        val r = nav?.markPoint(args["label"] as? String ?: "") ?: "carte indisponible"
+                        thread(isDaemon = true) { flightLog?.snap("point " + (args["label"] as? String ?: "")) }
+                        mapOf("result" to r, "points" to (nav?.describeWaypoints() ?: ""))
+                    }
+                    "remember" -> {
+                        val note = args["note"] as? String ?: ""
+                        memory.add(note, d.gps())
+                        a.addChat(Role.SYSTEM, "🧠 Retenu : $note")
+                        mapOf("result" to "retenu pour les prochains vols")
+                    }
                     "drone_status" -> d.state() + mapOf(
+                        "points_marques" to (nav?.describeWaypoints() ?: "aucun"),
+                        "action_en_cours" to (a.activity ?: "aucune"),
                         "ia" to if (a.paused) "en pause (ne peut pas bouger)" else "active",
                         "validation_par_le_pilote" to a.confirm,
                         "batterie_pourcent" to d.battery(),
@@ -676,7 +804,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val h = HeadsetStream(
             grab = ::grabForHeadset,
             state = ::headsetState,
-            onHead = { p, y, follow, recenter -> drone?.headLook(p, y, follow, recenter) },
+            onHead = { p, y, follow, recenter -> drone?.let { it.noteHead(p, y); it.headLook(p, y, follow, recenter) } },
             tls = headsetTls(),
             onMic = { pcm -> live?.feedMic(pcm) },
             onAudioClients = { n -> headsetAudio(n) },
@@ -839,6 +967,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .put("say", s.chat.lastOrNull { it.role == Role.DRONE }?.text ?: "")
             .put("tel", tel)
             .put("plan", plan ?: org.json.JSONObject.NULL)
+            .put("nav", runCatching { nav?.mapJson() }.getOrNull() ?: org.json.JSONObject.NULL)
+            .put("activity", clean(s.activity))
+            .put("rec", s.recording)
             .put("chat", chat)
             .put("top", listOf(s.mode.name, s.battery?.let { "$it %" } ?: "").joinToString(" "))
             .toString()
