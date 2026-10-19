@@ -74,8 +74,17 @@ class DjiDrone(
     }
 
     override fun doTakeoff() {
-        call { link.takeoff(it) }?.let { throw IllegalStateException("décollage refusé : $it") }
-        if (!waitFlying(true, 15_000)) throw IllegalStateException("décollage non confirmé")
+        var err = call { link.takeoff(it) }
+        if (err != null) {
+            // Certains drones refusent de décoller tant que le pilotage par l'application est actif :
+            // on le coupe, on décolle, et on le réactive ensuite.
+            log("décollage refusé ($err), nouvel essai sans le pilotage par l'application")
+            call(5) { link.disableVirtualStick(it) }
+            Thread.sleep(1000)
+            err = call { link.takeoff(it) }
+        }
+        if (err != null) throw IllegalStateException("décollage refusé : $err. État : ${link.diagnostics()}")
+        if (!waitFlying(true, 15_000)) throw IllegalStateException("décollage non confirmé. État : ${link.diagnostics()}")
         Thread.sleep(3000) // le Mini monte à ~1,2 m puis se stabilise
         // Le pilotage par l'application se réactive après le décollage.
         call { link.enableVirtualStick(it) }?.let { log("mode pilotage par l'application : $it") }

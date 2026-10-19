@@ -18,8 +18,8 @@ android {
         applicationId = "com.bebopia.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 12
-        versionName = "1.0.1"
+        versionCode = 13
+        versionName = "1.0.2"
         manifestPlaceholders["DJI_API_KEY"] = djiApiKey
         // Le kit DJI n'existe que pour les processeurs ARM (tous les téléphones récents).
         ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
@@ -76,7 +76,7 @@ dependencies {
     // Kit DJI (Mavic Mini, Mini 2, Mini SE…) : connexion par la radiocommande en USB
     implementation("com.dji:dji-sdk:4.18") {
         exclude(module = "library-anti-distortion") // seulement pour les Mavic 2
-        exclude(module = "fly-safe-database")       // téléchargée par DJI à l'enregistrement
+        // fly-safe-database gardée : sans elle, DJI peut refuser le décollage tant qu'il ne l'a pas téléchargée
     }
     compileOnly("com.dji:dji-sdk-provided:4.18")
     // Utilisées par les écrans du kit DJI sans qu'il les déclare

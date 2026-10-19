@@ -52,6 +52,12 @@ public class DjiLink {
     private volatile boolean flying = false;
     private volatile boolean landingConfirmationNeeded = false;
     private volatile String flightMode = "";
+    private volatile boolean imuPreheating = false;
+    private volatile String gps = "?";
+    private volatile int satellites = 0;
+    private volatile boolean vps = false;
+    private volatile boolean motorsOn = false;
+    private volatile boolean lowBattery = false;
     private volatile long lastFrameAt = 0L;
     private DJICodecManager codec;
     private VideoFeeder.VideoDataListener videoListener;
@@ -63,6 +69,26 @@ public class DjiLink {
     public boolean landingConfirmationNeeded() { return landingConfirmationNeeded; }
     public String flightMode() { return flightMode; }
     public boolean hasRecentFrame() { return System.currentTimeMillis() - lastFrameAt < 1500; }
+
+    /** État du drone en clair, pour comprendre un refus (décollage…). */
+    public String diagnostics() {
+        StringBuilder b = new StringBuilder();
+        b.append("mode de vol ").append(flightMode.isEmpty() ? "?" : flightMode);
+        b.append(", GPS ").append(gps).append(" (").append(satellites).append(" satellites)");
+        b.append(", capteurs du dessous ").append(vps ? "actifs" : "inactifs");
+        if (imuPreheating) b.append(", centrale inertielle en préchauffage (attends 1 à 2 min)");
+        if (motorsOn) b.append(", moteurs allumés");
+        if (lowBattery) b.append(", batterie faible");
+        try {
+            FlightController f = fc();
+            if (f != null && f.getCompass() != null) {
+                if (f.getCompass().hasError()) b.append(", ERREUR BOUSSOLE (calibre-la dans DJI Fly ou éloigne le drone du métal)");
+                if (f.getCompass().isCalibrating()) b.append(", boussole en calibration");
+            }
+            if (f != null && !f.isVirtualStickControlModeAvailable()) b.append(", pilotage par l'app indisponible pour l'instant");
+        } catch (Throwable ignored) { }
+        return b.toString();
+    }
 
     private void status(String s) {
         Listener l = listener;
@@ -158,6 +184,12 @@ public class DjiLink {
                     landingConfirmationNeeded = s.isLandingConfirmationNeeded();
                     if (s.getAircraftLocation() != null) altitude = s.getAircraftLocation().getAltitude();
                     flightMode = s.getFlightModeString() == null ? "" : s.getFlightModeString();
+                    imuPreheating = s.isIMUPreheating();
+                    gps = s.getGPSSignalLevel() == null ? "?" : s.getGPSSignalLevel().name();
+                    satellites = s.getSatelliteCount();
+                    vps = s.isVisionPositioningSensorBeingUsed();
+                    motorsOn = s.areMotorsOn();
+                    lowBattery = s.isLowerThanBatteryWarningThreshold();
                 }
             });
         }
@@ -175,7 +207,7 @@ public class DjiLink {
         return new CommonCallbacks.CompletionCallback() {
             @Override
             public void onResult(DJIError error) {
-                if (d != null) d.done(error == null ? null : error.getDescription());
+                if (d != null) d.done(error == null ? null : error.getDescription() + " (code " + error.getErrorCode() + ")");
             }
         };
     }

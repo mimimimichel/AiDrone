@@ -341,6 +341,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 a.start()
                 a.addChat(Role.SYSTEM, "Connecté : ${d.name} (batterie ${d.battery() ?: "?"} %). L'IA est en pause : parle-lui, ou appuie sur « ▶ IA ». " +
                     "En intérieur, il faut un sol texturé et éclairé pour que le drone tienne sa position.")
+                a.addChat(Role.SYSTEM, "État du drone : ${dji.diagnostics()}")
+                // Image très sombre ? (pièce sombre, caméra masquée, ou vidéo mal décodée)
+                viewModelScope.launch(Dispatchers.IO) {
+                    delay(6000)
+                    val g = TextureGray({ textureView }, { dji.hasRecentFrame() }).grab()
+                    if (g == null) {
+                        a.addChat(Role.SYSTEM, "Pas encore d'image du Mavic : vérifie que la caméra n'est pas masquée et que DJI Fly est fermée.")
+                    } else {
+                        val mean = g.px.average()
+                        if (mean < 25) a.addChat(Role.SYSTEM, "L'image du Mavic est très sombre (luminosité %.0f/255). ".format(mean) +
+                            "Allume la lumière : en plus, le drone a besoin de lumière pour tenir sa position sans GPS.")
+                    }
+                }
             } catch (e: Exception) {
                 if (mode == Mode.CONNECTING) mode = Mode.NONE
                 sysMessage("Connexion au Mavic impossible : ${e.message ?: e.javaClass.simpleName}")
