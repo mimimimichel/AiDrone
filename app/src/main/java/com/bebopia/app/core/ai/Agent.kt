@@ -200,6 +200,17 @@ class Agent(
     private fun yesNo(text: String): Boolean {
         val norm = normalize(text)
         val words = norm.split(' ').filter { it.isNotBlank() }.toSet()
+        // Plan en attente (et pas de déplacement en attente) : le oui/non porte sur le plan.
+        if (pending == null && plan?.let { !it.approved && !it.finished } == true && words.size <= 4) {
+            if (words.any { it in YES_WORDS } || norm.contains("vas y")) {
+                approvePlan()
+                return true
+            }
+            if (words.any { it in NO_WORDS }) {
+                rejectPlan()
+                return true
+            }
+        }
         if (pending != null && words.size <= 3) {
             if (words.any { it in YES_WORDS } || norm.contains("vas y")) {
                 approve()
@@ -229,7 +240,12 @@ class Agent(
             system("Action « ${describe(action)} » refusée : pas d'image.")
             return "refusé : pas d'image de la caméra"
         }
-        if (confirm && t in NEEDS_CONFIRM) {
+        val p = plan
+        if (p != null && !p.approved && !p.finished) {
+            return "refusé : ton plan n'est pas encore validé par le pilote. Attends sa réponse."
+        }
+        // Plan validé par le pilote : ses déplacements ne redemandent pas d'accord (les garde-fous restent).
+        if (confirm && t in NEEDS_CONFIRM && p?.running != true) {
             pending = action
             lastText = "Propose : ${describe(action)}"
             changed()
@@ -238,6 +254,91 @@ class Agent(
         }
         return execute(action)
     }
+
+    // ---- plan pour atteindre un objectif ----------------------------------------------
+    @Volatile var plan: Plan? = null
+        private set
+
+    /** L'IA propose un plan : il attend la validation du pilote. */
+    fun proposePlan(goal: String, stepTexts: List<String>): String {
+        val steps = stepTexts.map { it.trim() }.filter { it.isNotEmpty() }.take(12)
+        if (steps.isEmpty()) return "refusé : le plan n'a aucune étape"
+        pending = null
+        plan = Plan(goal.ifBlank { "objectif du pilote" }, steps.map { PlanStep(it) })
+        this.goal = goal
+        lastText = "Plan proposé : attend ta validation"
+        system("Plan proposé (${steps.size} étapes) : dis « oui » ou touche « Lancer le plan ».")
+        return "en attente : le plan s'affiche chez le pilote, qui doit dire oui ou toucher « Lancer le plan ». " +
+            "Explique-le-lui en une ou deux phrases, puis attends. N'agis pas avant sa validation."
+    }
+
+    fun approvePlan() {
+        val p = plan ?: return
+        if (p.approved || p.finished) return
+        plan = p.copy(approved = true)
+        paused = false
+        idle = false
+        lastText = "Plan lancé"
+        system("Plan validé : l'IA pilote et exécute les étapes. Dis « stop » à tout moment.")
+        onEvent?.invoke(
+            "Le pilote a validé ton plan, tu peux piloter. Commence l'étape 1 : regarde l'image, agis, " +
+                "puis vérifie sur la nouvelle image et appelle plan_progress.", true,
+        )
+    }
+
+    fun rejectPlan() {
+        val p = plan ?: return
+        plan = null
+        goal = ""
+        system("Plan refusé.")
+        onEvent?.invoke("Le pilote a refusé ton plan pour « ${p.goal} ». Demande-lui ce qu'il veut changer.", true)
+    }
+
+    /** Le pilote arrête le plan en cours. */
+    fun cancelPlan() {
+        val p = plan ?: return
+        plan = null
+        goal = ""
+        paused = true
+        pending = null
+        thread(isDaemon = true) { runCatching { drone.cancelMove() } }
+        system("Plan arrêté : l'IA est en pause, le drone reste sur place.")
+        onEvent?.invoke("Le pilote a arrêté le plan « ${p.goal} ». Tu es en pause : ne bouge plus.", false)
+    }
+
+    /** L'IA signale l'avancement d'une étape (numérotées à partir de 1). */
+    fun planProgress(step: Int, state: StepState, note: String): String {
+        val p = plan ?: return "pas de plan en cours"
+        if (step < 1 || step > p.steps.size) return "refusé : étape $step inexistante (1 à ${p.steps.size})"
+        val steps = p.steps.mapIndexed { i, s -> if (i == step - 1) PlanStep(s.text, state, note) else s }
+        plan = p.copy(steps = steps)
+        if (state == StepState.FAILED) system("Étape $step en échec${if (note.isNotBlank()) " : $note" else ""}")
+        changed()
+        val next = steps.indexOfFirst { it.state == StepState.TODO }
+        return if (next >= 0) "noté. Étape suivante : ${next + 1}. ${steps[next].text}"
+        else "noté. Toutes les étapes sont traitées : appelle finish_plan."
+    }
+
+    fun finishPlan(success: Boolean, summary: String): String {
+        val p = plan ?: return "pas de plan en cours"
+        plan = p.copy(finished = true, success = success, summary = summary)
+        goal = ""
+        idle = true
+        system((if (success) "Objectif atteint" else "Objectif non atteint") + if (summary.isNotBlank()) " : $summary" else "")
+        changed()
+        return "noté. Reste en stationnaire et attends les instructions du pilote."
+    }
+
+    /** Le pilote ferme un plan terminé. */
+    fun clearPlan() {
+        if (plan?.finished == true) {
+            plan = null
+            changed()
+        }
+    }
+
+    /** Le plan pour drone_status. */
+    fun planText(): String? = plan?.describe()
 
     // ---- cycle de vie -----------------------------------------------------------------
     fun start() {

@@ -49,6 +49,8 @@ Ouvre le dossier du projet, attends la synchronisation Gradle, branche ton tél�
 
 Exemples de phrases : « qu'est-ce que tu vois ? », « décolle », « tourne-toi doucement vers la maison », « monte un peu et regarde la gouttière », « reviens au point de départ ».
 
+**Objectifs et plans** (avec Gemini) : donne un objectif à voix haute (« va voir ce qu'il y a derrière le carton », « trouve le robot aspirateur »). L'IA regarde, propose un plan en quelques étapes qui s'affiche à l'écran ; dis « oui » ou touche « Lancer le plan ». Elle exécute alors les étapes une par une, vérifie chacune sur l'image, et propose un nouveau plan si ce qu'elle voit ne colle pas. Pendant un plan validé, les déplacements ne redemandent pas ton accord (les garde-fous et le détecteur d'obstacles restent actifs) ; « stop » ou « Arrêter le plan » l'interrompt. Avant chaque déplacement, l'IA écrit ce qu'elle voit (ligne « 👁 »).
+
 **Voix de robot** (activée par défaut, réglable dans ⚙) : la voix de l'IA passe par un effet métallique (modulation en anneau et résonance, façon robot de film), et l'IA adopte un ton un peu mécanique.
 
 ## Garde-fous

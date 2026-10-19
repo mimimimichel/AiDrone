@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -75,6 +76,8 @@ import com.bebopia.app.MainViewModel
 import com.bebopia.app.Mode
 import com.bebopia.app.UiState
 import com.bebopia.app.core.ai.ChatLine
+import com.bebopia.app.core.ai.Plan
+import com.bebopia.app.core.ai.StepState
 import com.bebopia.app.core.ai.Role
 
 private val Bg = Color(0xFF0E1216)
@@ -208,6 +211,9 @@ fun MainScreen(vm: MainViewModel) {
             modifier = Modifier.padding(vertical = 4.dp),
         )
 
+        // Plan de l'IA pour l'objectif donné
+        s.plan?.let { PlanCard(it, vm) }
+
         // Proposition en attente
         s.pending?.let { proposal ->
             Card(
@@ -322,6 +328,62 @@ private fun telemetry(s: UiState): String {
     return "🔋 %s   ⬆ %.1f m   ↔ %.1f m   • %s   • étape %d/%d   • %s".format(
         bat, s.altitude, s.distance, s.droneState, s.steps, s.maxSteps, s.network,
     )
+}
+
+@Composable
+private fun PlanCard(plan: Plan, vm: MainViewModel) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E2A33)),
+        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+    ) {
+        Column(Modifier.padding(10.dp)) {
+            val title = when {
+                plan.finished -> if (plan.success) "✅ Objectif atteint" else "❌ Objectif non atteint"
+                plan.approved -> "▶ Plan en cours"
+                else -> "📋 Plan proposé"
+            }
+            Text("$title : ${plan.goal}", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Column(
+                Modifier
+                    .heightIn(max = 140.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(top = 4.dp),
+            ) {
+                plan.steps.forEachIndexed { i, step ->
+                    val icon = when (step.state) {
+                        StepState.TODO -> "⬜"
+                        StepState.DOING -> "▶"
+                        StepState.DONE -> "✅"
+                        StepState.FAILED -> "❌"
+                        StepState.SKIPPED -> "⏭"
+                    }
+                    val color = if (step.state == StepState.DOING) Color(0xFF4FC3F7) else Color(0xFFCFD8DC)
+                    Text("$icon ${i + 1}. ${step.text}", color = color, fontSize = 13.sp)
+                    if (step.note.isNotBlank()) {
+                        Text("     ${step.note}", color = Muted, fontSize = 11.sp)
+                    }
+                }
+                if (plan.finished && plan.summary.isNotBlank()) {
+                    Text(plan.summary, color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                }
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                when {
+                    plan.finished -> OutlinedButton(onClick = { vm.clearPlan() }) { Text("Fermer") }
+                    plan.approved -> Button(
+                        onClick = { vm.cancelPlan() },
+                        colors = ButtonDefaults.buttonColors(containerColor = Danger),
+                    ) { Text("Arrêter le plan") }
+                    else -> {
+                        Button(onClick = { vm.approvePlan() }, colors = ButtonDefaults.buttonColors(containerColor = Ok)) {
+                            Text("Lancer le plan")
+                        }
+                        OutlinedButton(onClick = { vm.rejectPlan() }) { Text("Refuser") }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable

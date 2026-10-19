@@ -30,6 +30,8 @@ import com.bebopia.app.core.ai.ClaudeBrain
 import com.bebopia.app.core.ai.Eyes
 import com.bebopia.app.core.ai.LivePrompt
 import com.bebopia.app.core.ai.Speaker
+import com.bebopia.app.core.ai.Plan
+import com.bebopia.app.core.ai.StepState
 import org.json.JSONArray
 import com.bebopia.app.core.ai.Role
 import com.bebopia.app.core.bebop.ArNetwork
@@ -75,6 +77,7 @@ data class UiState(
     val robotVoice: Boolean = true,
     val guardWatching: Boolean = false,
     val guardTtc: Double? = null,
+    val plan: Plan? = null,
     val obstacle: Boolean = false,
 )
 
@@ -222,6 +225,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             robotVoice = robotVoice,
             guardWatching = guard?.watching ?: false,
             guardTtc = guard?.lastTtcS,
+            plan = a?.plan,
             obstacle = System.currentTimeMillis() - obstacleAt < 3000,
         )
     }
@@ -362,6 +366,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun land() = withAgent { it.humanLand() }
     fun emergency() = withAgent { it.humanEmergency() }
     fun approve() = withAgent { it.approve() }
+    fun approvePlan() = withAgent { it.approvePlan() }
+    fun rejectPlan() = withAgent { it.rejectPlan() }
+    fun cancelPlan() = withAgent { it.cancelPlan() }
+    fun clearPlan() = withAgent { it.clearPlan() }
     fun reject() = withAgent { it.reject() }
     fun send(text: String) {
         if (text.isBlank()) return
@@ -393,6 +401,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             onTool = { name, args ->
                 when (name) {
                     "drone_action" -> {
+                        (args["vu"] as? String)?.takeIf { it.isNotBlank() }?.let { a.addChat(Role.SYSTEM, "👁 $it") }
                         val r = a.aiAction(args)
                         // Image prise juste après le mouvement : l'IA décide la suite sur ce qu'elle voit maintenant.
                         live?.sendFrameNow()
@@ -402,7 +411,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         "ia" to if (a.paused) "en pause (ne peut pas bouger)" else "active",
                         "validation_par_le_pilote" to a.confirm,
                         "batterie_pourcent" to d.battery(),
+                        "plan" to (a.planText() ?: "aucun"),
                     )
+                    "propose_plan" -> mapOf("result" to a.proposePlan(
+                        args["goal"] as? String ?: "",
+                        (args["steps"] as? List<*>)?.mapNotNull { it?.toString() } ?: emptyList(),
+                    ))
+                    "plan_progress" -> {
+                        val st = when (args["status"] as? String) {
+                            "en_cours" -> StepState.DOING
+                            "fait" -> StepState.DONE
+                            "echec" -> StepState.FAILED
+                            else -> StepState.SKIPPED
+                        }
+                        mapOf("result" to a.planProgress((args["step"] as? Number)?.toInt() ?: 0, st, args["note"] as? String ?: ""))
+                    }
+                    "finish_plan" -> mapOf("result" to a.finishPlan(args["success"] as? Boolean ?: false, args["summary"] as? String ?: ""))
                     else -> mapOf("result" to "outil inconnu")
                 }
             },

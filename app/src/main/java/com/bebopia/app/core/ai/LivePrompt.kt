@@ -19,6 +19,20 @@ Petits pas près d'un obstacle. Un détecteur d'obstacles surveille la vidéo qu
 le résultat le dit ; recule, tourne ou monte avant de réessayer d'avancer.
 Pour connaître la batterie, l'altitude ou la distance, appelle drone_status.
 
+Regarder vraiment : chaque image que tu reçois est ce que voit le drone MAINTENANT. Avant chaque déplacement,
+regarde la dernière image et remplis « vu » avec ce que tu y vois réellement (objets, distances approximatives, obstacles).
+Ne suppose jamais ce qu'il y a hors de l'image : pour voir ailleurs, tourne-toi ou incline la caméra d'abord.
+Après chaque action, une image fraîche t'est envoyée : compare-la à ce que tu attendais.
+
+Objectifs et plans : quand le pilote te donne un objectif (ex. « va voir ce qu'il y a derrière le carton »,
+« fais le tour de la table », « trouve le robot aspirateur »), regarde d'abord l'image, puis appelle propose_plan
+avec un plan court de 2 à 8 étapes concrètes, chacune vérifiable à la caméra (ex. « tourner à droite jusqu'à voir le carton »,
+« avancer de 0,5 m vers le carton », « vérifier qu'il n'y a pas d'obstacle »). Explique-le en une ou deux phrases et attends :
+c'est le pilote qui le valide. Une fois validé, exécute les étapes une par une : appelle plan_progress avec « en_cours »
+au début d'une étape, agis, puis regarde la nouvelle image et appelle plan_progress avec « fait » ou « echec »
+(note = ce que tu as vu). Si ce que tu vois ne correspond pas au plan (obstacle, objet introuvable, détecteur qui t'arrête),
+dis-le et propose un nouveau plan avec propose_plan. À la fin, appelle finish_plan et dis au pilote ce que tu as trouvé.
+
 Résultats possibles de drone_action :
 - « en attente » : le pilote doit valider. Dis-lui en une phrase ce que tu proposes et attends.
   C'est l'application qui recueille son oui ou son non : n'appelle pas l'outil une deuxième fois pour la même action.
@@ -61,8 +75,53 @@ Les messages entre crochets [Message de l'application…] viennent de l'applicat
                     "yaw" to num("move : rotation en degrés, positif = vers la droite."),
                     "degrees" to num("tilt_camera : de -80 (vers le bas) à 15 (vers le haut)."),
                     "seconds" to num("hover : durée en secondes."),
+                    "vu" to mapOf(
+                        "type" to "STRING",
+                        "description" to "Ce que tu vois sur la dernière image qui justifie cette action (une phrase, concrète).",
+                    ),
                 ),
-                "required" to listOf("type"),
+                "required" to listOf("type", "vu"),
+            ),
+        ),
+        mapOf(
+            "name" to "propose_plan",
+            "description" to "Propose au pilote un plan pour atteindre son objectif. Le plan s'affiche ; il doit le valider avant que tu agisses.",
+            "parameters" to mapOf(
+                "type" to "OBJECT",
+                "properties" to mapOf(
+                    "goal" to mapOf("type" to "STRING", "description" to "L'objectif du pilote, reformulé en quelques mots."),
+                    "steps" to mapOf(
+                        "type" to "ARRAY",
+                        "items" to mapOf("type" to "STRING"),
+                        "description" to "2 à 8 étapes concrètes, courtes, chacune vérifiable à la caméra.",
+                    ),
+                ),
+                "required" to listOf("goal", "steps"),
+            ),
+        ),
+        mapOf(
+            "name" to "plan_progress",
+            "description" to "Signale l'avancement d'une étape du plan validé.",
+            "parameters" to mapOf(
+                "type" to "OBJECT",
+                "properties" to mapOf(
+                    "step" to num("Numéro de l'étape (1 = la première)."),
+                    "status" to mapOf("type" to "STRING", "enum" to listOf("en_cours", "fait", "echec", "saute")),
+                    "note" to mapOf("type" to "STRING", "description" to "Ce que tu as vu ou constaté (une phrase)."),
+                ),
+                "required" to listOf("step", "status"),
+            ),
+        ),
+        mapOf(
+            "name" to "finish_plan",
+            "description" to "Termine le plan : objectif atteint ou non, avec un résumé de ce que tu as trouvé.",
+            "parameters" to mapOf(
+                "type" to "OBJECT",
+                "properties" to mapOf(
+                    "success" to mapOf("type" to "BOOLEAN"),
+                    "summary" to mapOf("type" to "STRING", "description" to "Ce que tu as trouvé ou pourquoi tu n'as pas réussi."),
+                ),
+                "required" to listOf("success", "summary"),
             ),
         ),
         mapOf(
