@@ -226,8 +226,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             distance = d?.distanceFromHome() ?: 0.0,
             flying = d?.flying ?: false,
             droneState = bebop?.flyingStateLabel ?: if (d != null) (if (d.flying) "en vol" else "au sol") else "",
-            linkUp = bebop?.linkUp ?: if (mode == Mode.MAVIC) dji.isConnected() else true,
-            hasVideo = video?.hasRecentFrame ?: if (mode == Mode.MAVIC) dji.hasRecentFrame() else (mode == Mode.SIM),
+            linkUp = bebop?.linkUp ?: if (mode == Mode.MAVIC) djiOrNull?.isConnected() ?: false else true,
+            hasVideo = video?.hasRecentFrame ?: if (mode == Mode.MAVIC) djiOrNull?.hasRecentFrame() ?: false else (mode == Mode.SIM),
             listening = listening,
             voice = voiceLabel,
             network = router.describe,
@@ -252,17 +252,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val vision = GeminiVision({ geminiKey }, router::openApi)
 
-    private fun attachFinder(d: DroneBase, a: Agent, eyes: Eyes, simulation: Boolean) {
+    /** [hfov] : champ de vision horizontal de la caméra (Bebop 75°, Mavic Mini 72°, téléphone 65°). */
+    private fun attachFinder(d: DroneBase, a: Agent, eyes: Eyes, simulation: Boolean, hfov: Double = if (simulation) 65.0 else 75.0) {
         a.finder = ObjectFinder(
             d, eyes, vision,
-            hfovDeg = if (simulation) 65.0 else if (d is DjiDrone) 72.0 else 75.0,
+            hfovDeg = hfov,
             simulation = simulation,
             shouldStop = { a.paused },
             report = { a.addChat(Role.SYSTEM, it) },
         )
         a.areaSearch = AreaSearch(
             d, eyes, vision,
-            hfovDeg = if (simulation) 65.0 else if (d is DjiDrone) 72.0 else 75.0,
+            hfovDeg = hfov,
             simulation = simulation,
             shouldStop = { a.paused },
             report = { a.addChat(Role.SYSTEM, it) },
@@ -300,13 +301,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- connexion ------------------------------------------------------------------------
     // ---- Mavic Mini (kit DJI) ----------------------------------------------------------------
-    private val dji = DjiLink()
+    // Créé seulement au premier usage du Mavic : sans kit DJI chargé, il ne doit jamais exister.
+    @Volatile private var djiOrNull: DjiLink? = null
+    private val dji: DjiLink get() = djiOrNull ?: DjiLink().also { djiOrNull = it }
     @Volatile private var surfaceTexture: Triple<SurfaceTexture, Int, Int>? = null
 
     fun connectMavic() {
         if (mode != Mode.NONE) return
-        if (!DjiLink.available()) {
-            sysMessage("Le kit DJI n'a pas pu se charger sur ce téléphone : le Mavic n'est pas utilisable.")
+        if (!com.bebopia.app.dji.DjiBoot.ready) {
+            sysMessage("Le kit DJI n'a pas pu se charger sur ce téléphone (${com.bebopia.app.dji.DjiBoot.error ?: "?"}) : le Mavic n'est pas utilisable.")
             return
         }
         mode = Mode.CONNECTING
@@ -330,7 +333,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val eyes = TextureEyes({ textureView }, { dji.hasRecentFrame() })
                 val a = makeAgent(d, eyes)
                 startGuard(d, a, TextureGray({ textureView }, { dji.hasRecentFrame() }))
-                attachFinder(d, a, eyes, simulation = false)
+                attachFinder(d, a, eyes, simulation = false, hfov = 72.0)
                 drone = d
                 agent = a
                 mode = Mode.MAVIC
@@ -349,8 +352,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Surface de la vidéo (le kit DJI y décode directement le flux). */
     fun onSurfaceTexture(st: SurfaceTexture?, w: Int, h: Int) {
         surfaceTexture = st?.let { Triple(it, w, h) }
-        if (st == null) dji.stopVideo()
-        else if (mode == Mode.MAVIC) dji.startVideo(getApplication(), st, w, h)
+        if (st == null) djiOrNull?.stopVideo()
+        else if (mode == Mode.MAVIC) djiOrNull?.startVideo(getApplication(), st, w, h)
     }
 
     fun connectBebop() {
@@ -423,7 +426,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val d = drone
         val v = video
         val wasMavic = mode == Mode.MAVIC
-        if (wasMavic || mode == Mode.CONNECTING) dji.stopVideo()
+        if (wasMavic || mode == Mode.CONNECTING) djiOrNull?.stopVideo()
         agent = null
         drone = null
         video = null

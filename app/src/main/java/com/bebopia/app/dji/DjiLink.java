@@ -44,21 +44,6 @@ public class DjiLink {
         void done(String error);
     }
 
-    private static volatile boolean helperInstalled = false;
-
-    /** À appeler dans Application.attachBaseContext : charge les classes du kit DJI. */
-    public static void install(Context app) {
-        try {
-            com.cySdkyc.clx.Helper.install((android.app.Application) app);
-            helperInstalled = true;
-        } catch (Throwable t) {
-            Log.e(TAG, "kit DJI non chargé", t);
-        }
-    }
-
-    public static boolean available() {
-        return helperInstalled;
-    }
 
     private volatile boolean registered = false;
     private volatile Listener listener;
@@ -87,7 +72,7 @@ public class DjiLink {
     /** Enregistre l'application auprès de DJI (Internet nécessaire la première fois), puis cherche le drone. */
     public void register(Context ctx, Listener l) {
         listener = l;
-        if (!helperInstalled) {
+        if (!DjiBoot.INSTANCE.getReady()) {
             status("Kit DJI non chargé sur ce téléphone.");
             return;
         }
