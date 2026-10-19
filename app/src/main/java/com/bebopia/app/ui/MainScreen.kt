@@ -310,9 +310,10 @@ private fun statusLabel(s: UiState): String {
 
 private fun telemetry(s: UiState): String {
     if (s.mode != Mode.BEBOP && s.mode != Mode.SIM) return "Réseau : ${s.network}"
+    // La batterie est passée en paramètre, jamais collée dans le modèle : son « % » ferait planter format().
     val bat = s.battery?.let { "$it %" } ?: "?"
-    return "🔋 $bat   ⬆ %.1f m   ↔ %.1f m   • %s   • étape %d/%d   • %s".format(
-        s.altitude, s.distance, s.droneState, s.steps, s.maxSteps, s.network,
+    return "🔋 %s   ⬆ %.1f m   ↔ %.1f m   • %s   • étape %d/%d   • %s".format(
+        bat, s.altitude, s.distance, s.droneState, s.steps, s.maxSteps, s.network,
     )
 }
 

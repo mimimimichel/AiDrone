@@ -132,7 +132,7 @@ abstract class DroneBase(val limits: Limits) {
         }
         val done = moveTracked(f, r, du, yw, nx, ny, newZ)
         if (done < 1.0) {
-            return "${cancelReason ?: "interrompu"} (fait environ %.0f %% du déplacement)".format(done * 100)
+            return "%s (fait environ %.0f %% du déplacement)".format(cancelReason ?: "interrompu", done * 100)
         }
         return "déplacé (avant %+.1f m, droite %+.1f m, haut %+.1f m, rotation %+.0f°)".format(f, r, du, yw)
     }
