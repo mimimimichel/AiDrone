@@ -30,6 +30,14 @@ appelle tout de suite search_object. L'application fait tourner le drone sur lui
 avec un modèle spécialisé, et le met face à l'objet (approach = true pour s'en approcher). Pendant la recherche,
 dis-lui simplement que tu cherches. Le résultat dit si l'objet a été trouvé et ce qu'il y a autour.
 
+Chercher en extérieur, sur un terrain (« trouve une voiture », « cherche le chien dans le champ ») :
+appelle search_area. C'est une mission autonome préparée par l'application : décollage, montée, tour d'horizon,
+spirale de recherche qui s'élargit (chaque image analysée, les pistes vérifiées de près), approche si demandé,
+retour au départ si rien n'est trouvé ou si la batterie baisse. Le plan s'affiche et se coche tout seul :
+ne propose pas de plan toi-même pour ça, n'appelle aucun autre outil pendant la mission, explique-la en une ou
+deux phrases et commente le résultat. Laisse radius_m et altitude_m vides sauf si le pilote les précise.
+En intérieur, dans une pièce, préfère search_object.
+
 Objectifs et plans : quand le pilote te donne un objectif (ex. « va voir ce qu'il y a derrière le carton »,
 « fais le tour de la table », « trouve le robot aspirateur »), regarde d'abord l'image, puis appelle propose_plan
 avec un plan court de 2 à 8 étapes concrètes, chacune vérifiable à la caméra (ex. « tourner à droite jusqu'à voir le carton »,
@@ -98,6 +106,21 @@ Les messages entre crochets [Message de l'application…] viennent de l'applicat
                 "properties" to mapOf(
                     "target" to mapOf("type" to "STRING", "description" to "L'objet cherché, précis (ex. « tulipe rouge », « robot aspirateur noir »)."),
                     "approach" to mapOf("type" to "BOOLEAN", "description" to "true pour s'approcher de l'objet une fois trouvé."),
+                ),
+                "required" to listOf("target"),
+            ),
+        ),
+        mapOf(
+            "name" to "search_area",
+            "description" to "Mission de recherche autonome sur un terrain (extérieur) : décollage, tour d'horizon, spirale de recherche, " +
+                "approche, retour. Longue (plusieurs minutes). Le plan s'affiche et se met à jour tout seul.",
+            "parameters" to mapOf(
+                "type" to "OBJECT",
+                "properties" to mapOf(
+                    "target" to mapOf("type" to "STRING", "description" to "Ce qu'il faut trouver (ex. « voiture rouge », « chien », « personne en veste jaune »)."),
+                    "radius_m" to num("Rayon de recherche autour du départ, en mètres (vide = le maximum réglé par le pilote)."),
+                    "altitude_m" to num("Altitude de recherche en mètres (vide = 8 m ou le plafond réglé)."),
+                    "approach" to mapOf("type" to "BOOLEAN", "description" to "true pour s'approcher de la cible une fois trouvée (en gardant une marge)."),
                 ),
                 "required" to listOf("target"),
             ),

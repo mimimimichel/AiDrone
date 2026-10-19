@@ -61,6 +61,11 @@ class BebopDrone(
         if (!net.sendWithAck(BebopCmd.videoEnable(true))) log("activation de la vidéo non confirmée")
     }
 
+    override fun applyLimits() {
+        if (!net.sendWithAck(BebopCmd.maxAltitude(limits.maxAltitudeM.toFloat()))) log("plafond non confirmé par le drone")
+        if (!net.sendWithAck(BebopCmd.maxDistance(maxOf(10.0, limits.maxDistanceM).toFloat()))) log("distance max non confirmée par le drone")
+    }
+
     override fun disconnect() = net.close()
 
     override fun battery(): Int? = batteryPct

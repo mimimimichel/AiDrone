@@ -9,9 +9,10 @@ import kotlin.math.sqrt
 
 /** Réglages de sécurité. Ajuste-les avant de voler. */
 data class Limits(
-    val maxAltitudeM: Double = 3.0,   // plafond (envoyé au drone et vérifié ici)
+    @Volatile var maxAltitudeM: Double = 3.0, // plafond (envoyé au drone et vérifié ici, réglable : 2 à 30 m)
     val minAltitudeM: Double = 0.6,   // l'IA ne descend pas plus bas en vol
-    val maxDistanceM: Double = 15.0,  // rayon autour du décollage (estimation)
+    @Volatile var maxDistanceM: Double = 15.0, // rayon autour du décollage (estimation, réglable : 5 à 100 m)
+    val missionStepM: Double = 5.0,   // longueur max d'un segment pendant une mission de recherche
     @Volatile var maxStepM: Double = 1.0, // déplacement max par action (réglable : 0,2 à 1 m)
     val maxYawDeg: Double = 90.0,     // rotation max par action
     val maxSteps: Int = 40,           // actions max par session IA
@@ -57,6 +58,9 @@ abstract class DroneBase(val limits: Limits) {
     protected abstract fun doMove(forward: Double, right: Double, down: Double, yawRad: Double, waitS: Double)
     protected abstract fun doTilt(degrees: Int)
     protected open fun doCancelMove() {}
+
+    /** Renvoie le plafond et la distance max au drone après un changement de réglage. */
+    open fun applyLimits() {}
     protected open fun pause(seconds: Double) = Thread.sleep((seconds * 1000).toLong())
 
     fun takeoff(): String {
@@ -114,12 +118,13 @@ abstract class DroneBase(val limits: Limits) {
         return "caméra inclinée à $d°"
     }
 
-    fun move(forward: Double, right: Double, up: Double, yaw: Double): String {
+    /** [maxStep] : plus grand pendant une mission de recherche (segments de quelques mètres). */
+    fun move(forward: Double, right: Double, up: Double, yaw: Double, maxStep: Double = limits.maxStepM): String {
         if (!flying) return "refusé : le drone est au sol (décolle d'abord)"
         val l = limits
-        val f = forward.coerceIn(-l.maxStepM, l.maxStepM)
-        val r = right.coerceIn(-l.maxStepM, l.maxStepM)
-        val u = up.coerceIn(-l.maxStepM, l.maxStepM)
+        val f = forward.coerceIn(-maxStep, maxStep)
+        val r = right.coerceIn(-maxStep, maxStep)
+        val u = up.coerceIn(-maxStep, maxStep)
         val yw = yaw.coerceIn(-l.maxYawDeg, l.maxYawDeg)
 
         if (f > 0.05 && System.currentTimeMillis() < obstacleUntil) {

@@ -49,6 +49,15 @@ Ouvre le dossier du projet, attends la synchronisation Gradle, branche ton tél�
 
 Exemples de phrases : « qu'est-ce que tu vois ? », « décolle », « tourne-toi doucement vers la maison », « monte un peu et regarde la gouttière », « reviens au point de départ ».
 
+**Mission de recherche sur un terrain** : pose le drone au milieu d'un terrain dégagé et dis « trouve une voiture rouge » ou « cherche le chien et approche-toi ». L'IA lance une mission autonome dont le plan s'affiche et se coche tout seul :
+1. décoller et monter à l'altitude de recherche (8 m par défaut, jamais au-dessus du plafond réglé) ;
+2. tour d'horizon depuis le point de départ ;
+3. spirale qui s'élargit autour du départ (un point tous les 4 à 15 m selon l'altitude), avec un tour complet à chaque point ; chaque image est analysée par Gemini, et une « piste » incertaine est vérifiée de plus près ;
+4. cible trouvée : le drone se met face à elle, estime sa distance et s'en approche en gardant 4 m de marge si tu l'as demandé ;
+5. rien trouvé, zone couverte ou batterie sous 35 % : retour au point de départ (estimé, sans GPS).
+
+Avant de voler dehors, règle dans ⚙ le **plafond** (2 à 30 m) et le **rayon** (5 à 100 m) : ils sont envoyés au Bebop. Il faut au moins 45 % de batterie pour lancer une mission. « Stop » ou « Arrêter le plan » arrête tout, le drone reste sur place. Le détecteur d'obstacles ne voit que devant : vole loin des arbres, des lignes électriques et des gens, et garde toujours le drone en vue.
+
 **Chercher un objet** : « trouve la tulipe rouge », « cherche le robot aspirateur et approche-toi ». Le drone tourne sur lui-même par pas de 45° ; à chaque arrêt, une image nette est analysée par Gemini Robotics-ER (spécialisé dans le repérage d'objets). S'il ne trouve rien à hauteur, il refait un tour caméra inclinée vers le bas. Une fois l'objet trouvé, il se met face à lui et, si tu l'as demandé, s'en approche par petits pas (garde-fous et détecteur d'obstacles actifs). L'avancement s'affiche dans la conversation (🔎). En simulation, l'app te dit de tourner le téléphone à chaque pas.
 
 **Objectifs et plans** (avec Gemini) : donne un objectif à voix haute (« va voir ce qu'il y a derrière le carton », « trouve le robot aspirateur »). L'IA regarde, propose un plan en quelques étapes qui s'affiche à l'écran ; dis « oui » ou touche « Lancer le plan ». Elle exécute alors les étapes une par une, vérifie chacune sur l'image, et propose un nouveau plan si ce qu'elle voit ne colle pas. Pendant un plan validé, les déplacements ne redemandent pas ton accord (les garde-fous et le détecteur d'obstacles restent actifs) ; « stop » ou « Arrêter le plan » l'interrompt. Avant chaque déplacement, l'IA écrit ce qu'elle voit (ligne « 👁 »).

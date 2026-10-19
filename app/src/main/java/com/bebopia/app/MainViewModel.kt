@@ -12,6 +12,7 @@ import com.bebopia.app.android.BebopVideo
 import com.bebopia.app.android.GeminiLive
 import com.bebopia.app.android.GeminiVision
 import com.bebopia.app.core.ai.ObjectFinder
+import com.bebopia.app.core.ai.AreaSearch
 import com.bebopia.app.android.LiveState
 import com.bebopia.app.android.VoiceState
 import com.bebopia.app.android.NetworkRouter
@@ -77,6 +78,8 @@ data class UiState(
     val maxStep: Double = 1.0,
     val guardOn: Boolean = true,
     val robotVoice: Boolean = true,
+    val ceiling: Double = 3.0,
+    val radius: Double = 15.0,
     val guardWatching: Boolean = false,
     val guardTtc: Double? = null,
     val plan: Plan? = null,
@@ -104,6 +107,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var robotVoice: Boolean
         get() = prefs.getBoolean("robot_voice", true)
         private set(v) = prefs.edit().putBoolean("robot_voice", v).apply()
+    var ceiling: Double
+        get() = prefs.getFloat("ceiling", 3f).toDouble().coerceIn(2.0, 30.0)
+        private set(v) = prefs.edit().putFloat("ceiling", v.coerceIn(2.0, 30.0).toFloat()).apply()
+    var radius: Double
+        get() = prefs.getFloat("radius", 15f).toDouble().coerceIn(5.0, 100.0)
+        private set(v) = prefs.edit().putFloat("radius", v.coerceIn(5.0, 100.0).toFloat()).apply()
     var guardOn: Boolean
         get() = prefs.getBoolean("guard", true)
         private set(v) = prefs.edit().putBoolean("guard", v).apply()
@@ -117,7 +126,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         get() = prefs.getBoolean("speak", true)
         private set(v) = prefs.edit().putBoolean("speak", v).apply()
 
-    private val limits = Limits().also { it.maxStepM = maxStep }
+    private val limits = Limits().also {
+        it.maxStepM = maxStep
+        it.maxAltitudeM = ceiling
+        it.maxDistanceM = radius
+    }
     @Volatile private var guard: ObstacleGuard? = null
     @Volatile private var obstacleAt = 0L
     private val router = NetworkRouter(app).also { it.start() }
@@ -225,6 +238,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             maxStep = limits.maxStepM,
             guardOn = guardOn,
             robotVoice = robotVoice,
+            ceiling = limits.maxAltitudeM,
+            radius = limits.maxDistanceM,
             guardWatching = guard?.watching ?: false,
             guardTtc = guard?.lastTtcS,
             plan = a?.plan,
@@ -241,6 +256,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             simulation = simulation,
             shouldStop = { a.paused },
             report = { a.addChat(Role.SYSTEM, it) },
+        )
+        a.areaSearch = AreaSearch(
+            d, eyes, vision,
+            hfovDeg = if (simulation) 65.0 else 75.0,
+            simulation = simulation,
+            shouldStop = { a.paused },
+            report = { a.addChat(Role.SYSTEM, it) },
+            onPlan = { a.missionPlan(it) },
         )
     }
 
@@ -429,6 +452,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         "batterie_pourcent" to d.battery(),
                         "plan" to (a.planText() ?: "aucun"),
                     )
+                    "search_area" -> mapOf(
+                        "result" to a.aiAction(mapOf(
+                            "type" to "search_area",
+                            "target" to (args["target"] as? String ?: ""),
+                            "radius_m" to args["radius_m"],
+                            "altitude_m" to args["altitude_m"],
+                            "approach" to (args["approach"] == true),
+                        )),
+                        "etat" to d.state(),
+                    )
                     "search_object" -> mapOf(
                         "result" to a.aiAction(mapOf(
                             "type" to "search",
@@ -496,8 +529,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun saveSettings(
         key: String, gemini: String, model: String, confirm: Boolean, speak: Boolean, bargeIn: Boolean,
-        maxStep: Double, guardOn: Boolean, robotVoice: Boolean,
+        maxStep: Double, guardOn: Boolean, robotVoice: Boolean, ceiling: Double, radius: Double,
     ) {
+        if (Math.abs(ceiling - limits.maxAltitudeM) > 0.1 || Math.abs(radius - limits.maxDistanceM) > 0.1) {
+            this.ceiling = ceiling
+            this.radius = radius
+            limits.maxAltitudeM = this.ceiling
+            limits.maxDistanceM = this.radius
+            drone?.let { d -> thread(isDaemon = true) { runCatching { d.applyLimits() } } }
+            live?.takeIf { it.active }?.event(
+                "Le pilote a réglé le plafond à %.0f m et le rayon à %.0f m.".format(limits.maxAltitudeM, limits.maxDistanceM), false,
+            )
+        }
         this.robotVoice = robotVoice
         voice.robot = robotVoice
         val wasLive = useLive

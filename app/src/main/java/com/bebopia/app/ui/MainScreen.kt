@@ -516,6 +516,8 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
     var maxStep by remember { mutableStateOf(s.maxStep.toFloat()) }
     var guardOn by remember { mutableStateOf(s.guardOn) }
     var robotVoice by remember { mutableStateOf(s.robotVoice) }
+    var ceiling by remember { mutableStateOf(s.ceiling.toFloat()) }
+    var radius by remember { mutableStateOf(s.radius.toFloat()) }
     var model by remember { mutableStateOf(vm.model) }
     var confirm by remember { mutableStateOf(s.confirm) }
     var speak by remember { mutableStateOf(s.speak) }
@@ -524,7 +526,7 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
         title = { Text("Réglages") },
         confirmButton = {
             TextButton(onClick = {
-                vm.saveSettings(key, gemini, model, confirm, speak, bargeIn, Math.round(maxStep * 10) / 10.0, guardOn, robotVoice)
+                vm.saveSettings(key, gemini, model, confirm, speak, bargeIn, Math.round(maxStep * 10) / 10.0, guardOn, robotVoice, Math.round(ceiling).toDouble(), (Math.round(radius / 5f) * 5).toDouble())
                 onDismiss()
             }) { Text("Enregistrer") }
         },
@@ -578,6 +580,16 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
                     valueRange = 0.2f..1.0f,
                     steps = 7,
                 )
+                Text("Plafond : %d m".format(Math.round(ceiling)), modifier = Modifier.padding(top = 12.dp))
+                Slider(value = ceiling, onValueChange = { ceiling = it }, valueRange = 2f..30f, steps = 27)
+                Text("Rayon autour du décollage : %d m".format(Math.round(radius / 5f) * 5))
+                Slider(value = radius, onValueChange = { radius = it }, valueRange = 5f..100f, steps = 18)
+                Text(
+                    "En intérieur, garde 3 m et 15 m. Pour chercher sur un terrain, monte à 8–15 m et 30–60 m, " +
+                        "loin des arbres, des lignes électriques et des gens.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 SettingSwitch("Détecteur d'obstacles (arrête le drone s'il va toucher quelque chose devant)", guardOn) { guardOn = it }
                 Text(
                     "Le détecteur regarde la vidéo quand le drone avance. Il ne voit pas sur les côtés, " +
@@ -588,7 +600,7 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
                 SettingSwitch("Le drone parle à voix haute", speak) { speak = it }
                 SettingSwitch("Voix de robot", robotVoice) { robotVoice = it }
                 Text(
-                    "Limites de sécurité : plafond 3 m, rayon 15 m, 90° max par action, 40 actions max, " +
+                    "Autres limites : 90° max par action, 40 actions max, " +
                         "atterrissage automatique sous 25 % de batterie. Dis « stop » ou « atterris » à tout moment.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

@@ -35,9 +35,9 @@ class Agent(
 ) {
     companion object {
         /** Actions soumises à ton accord en mode validation (atterrir n'en a jamais besoin). */
-        val NEEDS_CONFIRM = setOf("takeoff", "move", "return_home", "tilt_camera", "search")
+        val NEEDS_CONFIRM = setOf("takeoff", "move", "return_home", "tilt_camera", "search", "search_area")
         /** Actions refusées s'il n'y a pas d'image. */
-        val NEEDS_IMAGE = setOf("takeoff", "move", "return_home", "search")
+        val NEEDS_IMAGE = setOf("takeoff", "move", "return_home", "search", "search_area")
 
         val STOP_WORDS = setOf("stop", "stoppe", "arrete", "arretes", "arretez", "pause", "halte", "stopper")
         val LAND_PHRASES = listOf("atterri", "pose toi", "pose-toi", "pose le drone")
@@ -69,6 +69,8 @@ class Agent(
             }
             "tilt_camera" -> "caméra à %.0f°".format(num(action, "degrees"))
             "takeoff" -> "décollage"
+            "search_area" -> "mission : chercher « ${action["target"] ?: "?"} » sur le terrain" +
+                (num(action, "radius_m").takeIf { it > 0 }?.let { " (rayon %.0f m)".format(it) } ?: "")
             "search" -> "chercher « ${action["target"] ?: "?"} »" + if (action["approach"] == true) " et m'en approcher" else ""
             "return_home" -> "retour au départ"
             else -> t ?: "?"
@@ -93,6 +95,9 @@ class Agent(
 
     /** Recherche active d'un objet (null sans clé Gemini). */
     var finder: ObjectFinder? = null
+
+    /** Mission de recherche sur un terrain (null sans clé Gemini). */
+    var areaSearch: AreaSearch? = null
 
     /** Conversation en direct : où envoyer les messages écrits du pilote. */
     var forward: ((String) -> Unit)? = null
@@ -331,6 +336,12 @@ class Agent(
         system((if (success) "Objectif atteint" else "Objectif non atteint") + if (summary.isNotBlank()) " : $summary" else "")
         changed()
         return "noté. Reste en stationnaire et attends les instructions du pilote."
+    }
+
+    /** Plan tenu à jour par une mission de recherche. */
+    fun missionPlan(p: Plan) {
+        plan = p
+        changed()
     }
 
     /** Le pilote ferme un plan terminé. */
@@ -609,6 +620,12 @@ class Agent(
                 "tilt_camera" -> drone.tiltCamera(num(action, "degrees"))
                 "hover" -> drone.hover(num(action, "seconds", 1.0))
                 "return_home" -> drone.returnHome()
+                "search_area" -> areaSearch?.run(
+                    action["target"]?.toString() ?: "",
+                    num(action, "radius_m").takeIf { it > 0 },
+                    num(action, "altitude_m").takeIf { it > 0 },
+                    action["approach"] == true,
+                ) ?: "refusé : la mission de recherche a besoin d'une clé Gemini"
                 "search" -> finder?.search(action["target"]?.toString() ?: "", action["approach"] == true)
                     ?: "refusé : la recherche d'objet a besoin d'une clé Gemini"
                 "done" -> {
