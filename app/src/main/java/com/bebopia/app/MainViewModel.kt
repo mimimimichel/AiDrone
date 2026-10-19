@@ -72,6 +72,7 @@ data class UiState(
     val bargeIn: Boolean = true,
     val maxStep: Double = 1.0,
     val guardOn: Boolean = true,
+    val robotVoice: Boolean = true,
     val guardWatching: Boolean = false,
     val obstacle: Boolean = false,
 )
@@ -94,6 +95,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var maxStep: Double
         get() = prefs.getFloat("max_step", 1.0f).toDouble().coerceIn(0.2, 1.0)
         private set(v) = prefs.edit().putFloat("max_step", v.coerceIn(0.2, 1.0).toFloat()).apply()
+    var robotVoice: Boolean
+        get() = prefs.getBoolean("robot_voice", true)
+        private set(v) = prefs.edit().putBoolean("robot_voice", v).apply()
     var guardOn: Boolean
         get() = prefs.getBoolean("guard", true)
         private set(v) = prefs.edit().putBoolean("guard", v).apply()
@@ -154,6 +158,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     init {
         voice.init()
         voice.speakEnabled = speak
+        voice.robot = robotVoice
         sysMessage("Connecte le téléphone au Wi-Fi du Bebop (Skycontroller éteinte), puis appuie sur « Connecter le Bebop ». Ou essaie la simulation avec la caméra du téléphone.")
         if (geminiKey.isBlank() && apiKey.isBlank()) {
             sysMessage("Ajoute ta clé Gemini dans les réglages (⚙) : elle est gratuite sur aistudio.google.com/apikey (la même que pour Vr2).")
@@ -213,6 +218,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             bargeIn = bargeIn,
             maxStep = limits.maxStepM,
             guardOn = guardOn,
+            robotVoice = robotVoice,
             guardWatching = guard?.watching ?: false,
             obstacle = System.currentTimeMillis() - obstacleAt < 3000,
         )
@@ -364,7 +370,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             apiKey = geminiKey,
             network = { router.cellular },
             eyes = eyes,
-            systemPrompt = LivePrompt.SYSTEM,
+            systemPrompt = LivePrompt.SYSTEM + if (robotVoice) LivePrompt.ROBOT_STYLE else "",
             tools = GeminiLive.toJson(LivePrompt.TOOLS) as JSONArray,
             onTool = { name, args ->
                 when (name) {
@@ -397,6 +403,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             },
             onError = { msg -> a.addChat(Role.SYSTEM, msg) },
             bargeIn = bargeIn,
+            robot = { robotVoice },
         )
         live = l
         l.start()
@@ -423,8 +430,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun saveSettings(
         key: String, gemini: String, model: String, confirm: Boolean, speak: Boolean, bargeIn: Boolean,
-        maxStep: Double, guardOn: Boolean,
+        maxStep: Double, guardOn: Boolean, robotVoice: Boolean,
     ) {
+        this.robotVoice = robotVoice
+        voice.robot = robotVoice
         val wasLive = useLive
         val stepChanged = Math.abs(maxStep - limits.maxStepM) > 0.01
         this.maxStep = maxStep

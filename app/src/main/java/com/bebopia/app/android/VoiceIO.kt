@@ -34,6 +34,18 @@ class VoiceIO(
     private var tts: TextToSpeech? = null
     @Volatile private var ttsReady = false
     @Volatile var speakEnabled = true
+
+    /** Voix de robot : plus grave et un peu plus lente (la synthèse du téléphone ne permet pas mieux). */
+    var robot = false
+        set(v) {
+            field = v
+            applyVoice()
+        }
+
+    private fun applyVoice() {
+        tts?.setPitch(if (robot) 0.55f else 1.0f)
+        tts?.setSpeechRate(if (robot) 0.9f else 1.0f)
+    }
     private var recognizer: SpeechRecognizer? = null
 
     /** Conversation ouverte (le micro se relance tout seul). Lu et écrit sur le thread principal. */
@@ -48,6 +60,7 @@ class VoiceIO(
         tts = TextToSpeech(context) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 tts?.setLanguage(Locale.FRANCE)
+                applyVoice()
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {}
                     override fun onDone(utteranceId: String?) { main.post { speechFinished() } }

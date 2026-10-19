@@ -49,6 +49,8 @@ Ouvre le dossier du projet, attends la synchronisation Gradle, branche ton tél�
 
 Exemples de phrases : « qu'est-ce que tu vois ? », « décolle », « tourne-toi doucement vers la maison », « monte un peu et regarde la gouttière », « reviens au point de départ ».
 
+**Voix de robot** (activée par défaut, réglable dans ⚙) : la voix de l'IA passe par un effet métallique (modulation en anneau et résonance, façon robot de film), et l'IA adopte un ton un peu mécanique.
+
 ## Garde-fous
 
 - L'IA ne commande jamais les moteurs : elle propose une action, le code la vérifie puis l'exécute.

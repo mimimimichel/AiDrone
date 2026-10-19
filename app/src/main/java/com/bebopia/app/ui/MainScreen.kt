@@ -438,6 +438,7 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
     var bargeIn by remember { mutableStateOf(s.bargeIn) }
     var maxStep by remember { mutableStateOf(s.maxStep.toFloat()) }
     var guardOn by remember { mutableStateOf(s.guardOn) }
+    var robotVoice by remember { mutableStateOf(s.robotVoice) }
     var model by remember { mutableStateOf(vm.model) }
     var confirm by remember { mutableStateOf(s.confirm) }
     var speak by remember { mutableStateOf(s.speak) }
@@ -446,7 +447,7 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
         title = { Text("Réglages") },
         confirmButton = {
             TextButton(onClick = {
-                vm.saveSettings(key, gemini, model, confirm, speak, bargeIn, Math.round(maxStep * 10) / 10.0, guardOn)
+                vm.saveSettings(key, gemini, model, confirm, speak, bargeIn, Math.round(maxStep * 10) / 10.0, guardOn, robotVoice)
                 onDismiss()
             }) { Text("Enregistrer") }
         },
@@ -508,6 +509,7 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 SettingSwitch("Le drone parle à voix haute", speak) { speak = it }
+                SettingSwitch("Voix de robot", robotVoice) { robotVoice = it }
                 Text(
                     "Limites de sécurité : plafond 3 m, rayon 15 m, 90° max par action, 40 actions max, " +
                         "atterrissage automatique sous 25 % de batterie. Dis « stop » ou « atterris » à tout moment.",

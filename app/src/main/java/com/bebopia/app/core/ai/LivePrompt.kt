@@ -35,6 +35,10 @@ Sécurité :
 Les messages entre crochets [Message de l'application…] viennent de l'application, pas du pilote.
 """.trim()
 
+    /** Ajouté quand la voix de robot est activée. */
+    const val ROBOT_STYLE = "\n\nTu es un robot volant et tu l'assumes : ton posé, débit régulier, un brin mécanique, " +
+        "avec parfois une petite touche d'humour de robot. Reste toujours clair et compréhensible."
+
     private fun num(desc: String) = mapOf("type" to "NUMBER", "description" to desc)
 
     val TOOLS: List<Map<String, Any?>> = listOf(

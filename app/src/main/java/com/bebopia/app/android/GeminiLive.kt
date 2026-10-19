@@ -16,6 +16,7 @@ import android.os.Build
 import android.util.Base64
 import android.util.Log
 import com.bebopia.app.core.ai.Eyes
+import com.bebopia.app.core.audio.RobotVoice
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -52,6 +53,8 @@ class GeminiLive(
     private val onError: (String) -> Unit,
     /** false : le micro se coupe pendant que le drone parle (si le drone s'interrompt tout seul). */
     private val bargeIn: Boolean,
+    /** Voix de robot (effet appliqué au son de Gemini). */
+    private val robot: () -> Boolean = { false },
 ) {
     companion object {
         private const val TAG = "GeminiLive"
@@ -93,6 +96,7 @@ class GeminiLive(
     private var echo: AcousticEchoCanceler? = null
     private var noise: NoiseSuppressor? = null
     private val playQueue = LinkedBlockingQueue<ByteArray>()
+    private val robotFx = RobotVoice(OUT_RATE)
     @Volatile private var framesWritten = 0L
     @Volatile private var playGeneration = 0
     @Volatile private var lastState = LiveState.OFF
@@ -423,6 +427,7 @@ class GeminiLive(
         while (active && track === tr) {
             val chunk = playQueue.poll(200, TimeUnit.MILLISECONDS) ?: continue
             val gen = playGeneration
+            if (robot()) robotFx.process(chunk)
             var off = 0
             while (off < chunk.size && active && gen == playGeneration) {
                 val w = tr.write(chunk, off, chunk.size - off)
@@ -437,6 +442,7 @@ class GeminiLive(
     private fun stopPlayback() {
         playGeneration++
         playQueue.clear()
+        robotFx.reset()
         track?.let { t ->
             runCatching {
                 t.pause()
