@@ -16,7 +16,7 @@ class ClaudeBrain(
 ) : Brain {
 
     override fun decide(jpegBase64: String?, userText: String): Decision {
-        if (apiKey.isBlank()) throw IllegalStateException("clé API Claude manquante : ajoute-la dans les réglages")
+        if (apiKey.isBlank()) throw IllegalStateException("aucune clé : colle ta clé Gemini (gratuite) dans les réglages ⚙")
 
         val content = ArrayList<Any>()
         if (jpegBase64 != null) {

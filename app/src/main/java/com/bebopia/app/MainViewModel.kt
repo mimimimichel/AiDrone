@@ -74,6 +74,7 @@ data class UiState(
     val guardOn: Boolean = true,
     val robotVoice: Boolean = true,
     val guardWatching: Boolean = false,
+    val guardTtc: Double? = null,
     val obstacle: Boolean = false,
 )
 
@@ -220,30 +221,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             guardOn = guardOn,
             robotVoice = robotVoice,
             guardWatching = guard?.watching ?: false,
+            guardTtc = guard?.lastTtcS,
             obstacle = System.currentTimeMillis() - obstacleAt < 3000,
         )
     }
 
     private fun startGuard(d: DroneBase, a: Agent, frames: GrayFrames) {
         guard?.stop()
-        guard = ObstacleGuard(d, frames, enabled = { guardOn }, onObstacle = { ttc ->
+        guard = ObstacleGuard(d, frames, enabled = { guardOn }, onObstacle = { ttc, moving ->
             obstacleAt = System.currentTimeMillis()
-            a.obstacleStop(ttc)
+            a.obstacleStop(ttc, moving)
         }, log = ::log).also { it.start() }
     }
 
     private fun makeAgent(d: DroneBase, eyes: Eyes): Agent {
         // Avec une clé Gemini : conversation en direct (pas de cerveau « question/réponse »).
-        val brain = if (useLive) null else Brain { image, text -> ClaudeBrain(apiKey, model, router::openApi).decide(image, text) }
-        val a = Agent(d, eyes, brain, speaker, confirm = confirm, log = ::log)
-        if (brain == null) {
-            a.forward = { text ->
-                val l = live
-                if (l != null && l.active) l.ask(text)
-                else a.addChat(Role.SYSTEM, "Appuie sur 🎤 pour ouvrir la conversation avec le drone.")
-            }
-            a.onEvent = { text, reply -> live?.takeIf { it.active }?.event(text, reply) }
+        // Choisi à chaque étape : coller la clé Gemini en cours de route suffit.
+        val claude = Brain { image, text -> ClaudeBrain(apiKey, model, router::openApi).decide(image, text) }
+        val a = Agent(d, eyes, { if (useLive) null else claude }, speaker, confirm = confirm, log = ::log)
+        a.forward = { text ->
+            val l = live
+            if (l != null && l.active) l.ask(text)
+            else a.addChat(Role.SYSTEM, "Appuie sur 🎤 pour ouvrir la conversation avec le drone.")
         }
+        a.onEvent = { text, reply -> live?.takeIf { it.active }?.event(text, reply) }
         agentEyes = eyes
         synchronized(localChat) {
             localChat.forEach { a.addChat(it.role, it.text) }
@@ -351,6 +352,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun toggleAi() = withAgent {
+        if (it.paused && useLive && live == null) {
+            sysMessage("L'IA pilote pendant la conversation : appuie aussi sur 🎤 pour lui parler.")
+        }
         if (it.paused && geminiKey.isBlank() && apiKey.isBlank()) sysMessage("Ajoute d'abord ta clé Gemini dans les réglages (⚙).")
         else it.togglePause()
     }
@@ -464,9 +468,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         this.speak = speak
         voice.speakEnabled = speak
         agent?.confirm = confirm
-        if (agent != null && wasLive != useLive) {
-            sysMessage("Déconnecte puis reconnecte le drone (ou la simulation) pour utiliser la nouvelle clé.")
-        }
+        if (agent != null && wasLive != useLive && !useLive) stopLive()
         refresh()
     }
 

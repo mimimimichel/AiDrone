@@ -7,8 +7,9 @@ import kotlin.concurrent.thread
 fun interface GrayFrames { fun grab(): Gray? }
 
 /**
- * Surveille la vidéo pendant que le drone avance et l'arrête tout de suite
- * si quelque chose devant lui grossit trop vite (collision probable dans moins de 2 s).
+ * Surveille la vidéo dès que le drone vole. Si quelque chose devant lui grossit trop vite
+ * (collision probable dans moins de 2 s) : pendant un déplacement vers l'avant, arrêt immédiat ;
+ * sinon (quelque chose approche du drone), alerte et avance bloquée quelques secondes.
  * Fonctionne sans l'IA, une dizaine de fois par seconde.
  *
  * Limites : ne voit que devant (pas sur les côtés, ni au-dessus), a besoin d'une surface texturée
@@ -18,7 +19,8 @@ class ObstacleGuard(
     private val drone: DroneBase,
     private val frames: GrayFrames,
     private val enabled: () -> Boolean,
-    private val onObstacle: (ttcS: Double) -> Unit,
+    /** moving : le drone avançait et a été arrêté ; sinon c'est une simple alerte. */
+    private val onObstacle: (ttcS: Double, moving: Boolean) -> Unit,
     private val log: (String) -> Unit = {},
 ) {
     private val detector = LoomingDetector()
@@ -28,6 +30,7 @@ class ObstacleGuard(
         private set
     @Volatile var watching = false
         private set
+    private var lastAlert = 0L
 
     fun start() {
         if (running) return
@@ -54,7 +57,7 @@ class ObstacleGuard(
         while (running) {
             val t0 = System.currentTimeMillis()
             // Caméra très inclinée vers le bas : le sol qui défile ressemble à un obstacle.
-            val active = enabled() && drone.flying && drone.movingForward && drone.cameraTilt >= -25
+            val active = enabled() && drone.flying && drone.cameraTilt >= -25
             watching = active
             if (!active) {
                 detector.reset()
@@ -70,12 +73,24 @@ class ObstacleGuard(
             }
             val r = detector.update(g, System.currentTimeMillis())
             lastTtcS = r.ttcS
-            if (r.danger && drone.movingForward) {
+            if (r.danger) {
                 val ttc = r.ttcS ?: 0.0
-                log("obstacle : contact estimé dans %.1f s, arrêt".format(ttc))
-                drone.stopForObstacle()
+                val moving = drone.movingForward
+                val now = System.currentTimeMillis()
+                if (moving) {
+                    log("obstacle : contact estimé dans %.1f s, arrêt".format(ttc))
+                    drone.stopForObstacle()
+                    onObstacle(ttc, true)
+                    lastAlert = now
+                } else {
+                    drone.obstacleAhead()
+                    // Une alerte toutes les 5 s au plus
+                    if (now - lastAlert > 5000) {
+                        lastAlert = now
+                        onObstacle(ttc, false)
+                    }
+                }
                 detector.reset()
-                onObstacle(ttc)
             }
             // Environ 12 images par seconde
             val wait = 80 - (System.currentTimeMillis() - t0)

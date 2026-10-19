@@ -181,10 +181,17 @@ fun MainScreen(vm: MainViewModel) {
                             .padding(horizontal = 14.dp, vertical = 8.dp),
                     )
                 } else if (s.guardWatching) {
+                    // Ce que mesure le détecteur : temps avant contact avec ce qui approche devant.
+                    val ttc = s.guardTtc
                     Text(
-                        "🛡",
-                        fontSize = 16.sp,
-                        modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
+                        if (ttc == null || ttc > 9.9) "🛡 rien n'approche" else "🛡 contact dans %.1f s".format(ttc),
+                        color = if (ttc != null && ttc < 3.0) Color(0xFFFFCC80) else Color.White,
+                        fontSize = 11.sp,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp)
+                            .background(Color(0xAA000000), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
                     )
                 }
                 if (s.mode == Mode.BEBOP && !s.hasVideo) {

@@ -20,13 +20,14 @@ class ChatLine(val role: Role, val text: String)
  * Boucle de l'agent : écouter -> regarder -> décider -> parler -> agir, dans son propre thread.
  * L'IA ne touche jamais aux moteurs : elle propose, ce code vérifie et exécute.
  *
- * Sans [brain] (conversation en direct avec Gemini Live), la conversation se passe ailleurs :
+ * Quand [brainOf] ne donne pas de cerveau (conversation en direct avec Gemini Live), la conversation se passe ailleurs :
  * l'IA propose ses actions par [aiAction], et ce que dit le pilote arrive par [liveTranscript].
  */
 class Agent(
     private val drone: DroneBase,
     private val eyes: Eyes,
-    private val brain: Brain?,
+    /** Le cerveau « question/réponse » (Claude), ou null en conversation en direct. Relu à chaque étape. */
+    private val brainOf: () -> Brain?,
     private val speaker: Speaker,
     @Volatile var goal: String = "",
     @Volatile var confirm: Boolean = true,
@@ -95,7 +96,7 @@ class Agent(
     /** Conversation en direct : événement à signaler à l'IA (reply = elle doit répondre). */
     var onEvent: ((text: String, reply: Boolean) -> Unit)? = null
 
-    private val live get() = brain == null
+    private val live get() = brainOf() == null
     private val execLock = Any()
 
     private val history = mutableListOf<String>()
@@ -320,12 +321,19 @@ class Agent(
     }
 
     /** Le détecteur d'obstacles vient d'arrêter le drone. */
-    fun obstacleStop(ttcS: Double) {
-        pending = null
-        lastText = "Obstacle devant : arrêt"
-        system("Détecteur d'obstacles : quelque chose approche devant (contact estimé dans %.1f s), déplacement arrêté.".format(ttcS))
-        synchronized(history) { history.add("le détecteur d'obstacles a arrêté le drone : obstacle devant") }
-        speak("Obstacle devant moi, je me suis arrêté.")
+    fun obstacleStop(ttcS: Double, moving: Boolean) {
+        if (moving) {
+            pending = null
+            lastText = "Obstacle devant : arrêt"
+            system("Détecteur d'obstacles : quelque chose devant (contact estimé dans %.1f s), déplacement arrêté.".format(ttcS))
+            synchronized(history) { history.add("le détecteur d'obstacles a arrêté le drone : obstacle devant") }
+            speak("Obstacle devant moi, je me suis arrêté.")
+        } else {
+            lastText = "Attention : quelque chose approche"
+            system("Détecteur d'obstacles : quelque chose approche devant (contact estimé dans %.1f s). Avance bloquée 5 s.".format(ttcS))
+            synchronized(history) { history.add("le détecteur d'obstacles a vu quelque chose approcher devant") }
+            speak("Attention, quelque chose approche devant moi.")
+        }
     }
 
     fun linkLost() {
@@ -340,15 +348,13 @@ class Agent(
     fun hear(text: String) {
         addChat(Role.PILOT, text)
         synchronized(chatLines) { openRole = null }
-        if (safetyWords(text)) {
-            // En direct, l'IA doit savoir ce qui s'est passé.
+        if (live) {
+            // En direct : l'IA doit savoir ce qui a été dit, même un ordre de sécurité déjà traité.
+            safetyWords(text)
             forward?.invoke(text)
             return
         }
-        forward?.let {
-            it(text)
-            return
-        }
+        if (safetyWords(text)) return
         pending = null // un nouvel ordre remplace la proposition en attente
         idle = false
         inbox.add(text)
@@ -394,6 +400,7 @@ class Agent(
             return
         }
 
+        val brain = brainOf()
         if (brain == null) {
             // En direct : la conversation se passe ailleurs, ici on surveille la batterie.
             val bat = drone.battery()
