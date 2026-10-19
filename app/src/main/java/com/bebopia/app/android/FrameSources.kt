@@ -109,22 +109,22 @@ class PreviewEyes(private val view: () -> PreviewView?) : Eyes {
 // ---- petites images en gris pour le détecteur d'obstacles -----------------------------------
 private const val GUARD_W = 160
 
-private fun toGray(src: Bitmap): Gray {
-    val h = maxOf(2, GUARD_W * src.height / src.width)
-    val b = if (src.width != GUARD_W || src.height != h) Bitmap.createScaledBitmap(src, GUARD_W, h, true) else src
-    val px = IntArray(GUARD_W * h)
-    b.getPixels(px, 0, GUARD_W, 0, 0, GUARD_W, h)
+private fun toGray(src: Bitmap, width: Int = GUARD_W): Gray {
+    val h = maxOf(2, width * src.height / src.width)
+    val b = if (src.width != width || src.height != h) Bitmap.createScaledBitmap(src, width, h, true) else src
+    val px = IntArray(width * h)
+    b.getPixels(px, 0, width, 0, 0, width, h)
     if (b !== src) b.recycle()
     val out = FloatArray(px.size)
     for (i in px.indices) {
         val c = px[i]
         out[i] = 0.299f * ((c shr 16) and 0xFF) + 0.587f * ((c shr 8) and 0xFF) + 0.114f * (c and 0xFF)
     }
-    return Gray(GUARD_W, h, out)
+    return Gray(width, h, out)
 }
 
 /** Capture sur le thread de l'interface, en attendant au plus 300 ms (le détecteur doit rester rapide). */
-private fun grayOnMain(grab: () -> Bitmap?): Gray? {
+private fun grayOnMain(width: Int = GUARD_W, grab: () -> Bitmap?): Gray? {
     val latch = CountDownLatch(1)
     var bitmap: Bitmap? = null
     Handler(Looper.getMainLooper()).post {
@@ -139,7 +139,7 @@ private fun grayOnMain(grab: () -> Bitmap?): Gray? {
     if (!latch.await(300, TimeUnit.MILLISECONDS)) return null
     val b = bitmap ?: return null
     return try {
-        toGray(b)
+        toGray(b, width)
     } finally {
         b.recycle()
     }
@@ -149,17 +149,19 @@ private fun grayOnMain(grab: () -> Bitmap?): Gray? {
 class TextureGray(
     private val view: () -> TextureView?,
     private val hasVideo: () -> Boolean,
+    /** Largeur de l'image (160 pour le détecteur d'obstacles, plus pour le suivi d'une cible). */
+    private val width: Int = GUARD_W,
 ) : GrayFrames {
     override fun grab(): Gray? {
         if (!hasVideo()) return null
-        return grayOnMain {
+        return grayOnMain(width) {
             val v = view()
-            if (v != null && v.isAvailable) v.getBitmap(GUARD_W, GUARD_W * 9 / 16) else null
+            if (v != null && v.isAvailable) v.getBitmap(width, width * 9 / 16) else null
         }
     }
 }
 
 /** Caméra du téléphone (simulation), pour le détecteur d'obstacles. */
-class PreviewGray(private val view: () -> PreviewView?) : GrayFrames {
-    override fun grab(): Gray? = grayOnMain { view()?.bitmap }
+class PreviewGray(private val view: () -> PreviewView?, private val width: Int = GUARD_W) : GrayFrames {
+    override fun grab(): Gray? = grayOnMain(width) { view()?.bitmap }
 }

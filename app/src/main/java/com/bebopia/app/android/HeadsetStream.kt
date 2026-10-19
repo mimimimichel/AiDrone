@@ -428,6 +428,7 @@ function draw(){
 
 function drawHUD(s,tel){
   const cx=VX+VW/2, cy=VY+VH/2, ppd=VH/40;
+  drawTrack(g,s.track,VX,VY,VW,VH);
   // Horizon artificiel (assiette du drone)
   const pitch=num(tel.pitch,0), roll=num(tel.roll,0);
   g.save();g.translate(cx,cy);g.rotate(-roll*Math.PI/180);
@@ -630,6 +631,15 @@ function drawMap(c,cx,cy,R,tel,nav){
   c.font='11px sans-serif';c.fillStyle=GREY;c.fillText(gps?'Imagerie © Esri':'sans GPS : position estimée',cx,cy+R+16);
 }
 
+/** Cadre autour de la cible suivie (vert : confirmée par l'IA il y a peu ; jaune : suivie par le téléphone seul). */
+function drawTrack(c,tr,X,Y,W2,H2){if(!tr)return;const col=tr.ok?'#7CFC9A':'#FFD54F';
+  const x=X+(tr.cx-tr.w/2)*W2, y=Y+(tr.cy-tr.h/2)*H2, w=tr.w*W2, h=tr.h*H2, k=Math.min(w,h)*0.3;
+  c.strokeStyle=col;c.lineWidth=5;c.beginPath();
+  c.moveTo(x,y+k);c.lineTo(x,y);c.lineTo(x+k,y);c.moveTo(x+w-k,y);c.lineTo(x+w,y);c.lineTo(x+w,y+k);
+  c.moveTo(x+w,y+h-k);c.lineTo(x+w,y+h);c.lineTo(x+w-k,y+h);c.moveTo(x+k,y+h);c.lineTo(x,y+h);c.lineTo(x,y+h-k);c.stroke();
+  c.font='bold 26px sans-serif';c.textAlign='left';c.lineWidth=6;c.strokeStyle='rgba(0,0,0,.85)';const lb='🎯 '+(tr.label||'');
+  c.strokeText(lb,x,y-10);c.fillStyle=col;c.fillText(lb,x,y-10);}
+
 /** Distance au sol du point visé (centre de l'image), d'après l'altitude et la nacelle. */
 function aimDist(s,tel){const gp=num(tel.gimbal,0), a=num(s.alt,0);if(gp>-6||a<0.5)return null;return a/Math.tan(-gp*Math.PI/180);}
 
@@ -639,6 +649,7 @@ function drawOSD(){
   const o=V.getContext('2d'), s=state, tel=s.tel||{}, w=1920, h=1080, cx=w/2, cy=h/2;
   o.fillStyle='#000';o.fillRect(0,0,w,h);
   if(frame)o.drawImage(frame,0,0,w,h);else{o.fillStyle=GREY;o.font='bold 48px sans-serif';o.textAlign='center';o.fillText('PAS DE VIDÉO',cx,cy);}
+  drawTrack(o,s.track,0,0,w,h);
   function tx(str,x,y,size,color,align,bold){o.font=(bold?'bold ':'')+size+'px sans-serif';o.textAlign=align||'left';o.lineWidth=6;o.strokeStyle='rgba(0,0,0,.85)';o.strokeText(str,x,y);o.fillStyle=color||'#fff';o.fillText(str,x,y);}
   // Haut gauche : batterie, temps de vol
   const b=num(s.battery,null), bc=b===null?GREY:b<30?RED:b<50?WARN:HUD;

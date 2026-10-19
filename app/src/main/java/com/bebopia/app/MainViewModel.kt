@@ -309,7 +309,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val vision = GeminiVision({ geminiKey }, router::openApi)
 
     /** [hfov] : champ de vision horizontal de la caméra (Bebop 75°, Mavic Mini 72°, téléphone 65°). */
-    private fun attachFinder(d: DroneBase, a: Agent, eyes: Eyes, simulation: Boolean, hfov: Double = if (simulation) 65.0 else 75.0) {
+    private fun attachFinder(d: DroneBase, a: Agent, eyes: Eyes, simulation: Boolean, hfov: Double = if (simulation) 65.0 else 75.0, track: GrayFrames? = null) {
         // Avant chaque avancée commandée par l'IA : obstacle dans l'axe ? (modèle de vision)
         a.pathChecker = com.bebopia.app.core.ai.PathChecker { jpeg, fwd -> vision.checkPath(jpeg, fwd) }
         a.finder = ObjectFinder(
@@ -335,7 +335,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         a.nav = n
         a.areaSearch?.nav = n
         nav = n
-        a.follower = Follower(d, eyes, vision, hfovDeg = hfov, simulation = simulation, shouldStop = { a.paused },
+        a.follower = Follower(d, eyes, vision, track, hfovDeg = hfov, simulation = simulation, shouldStop = { a.paused },
             report = { a.addChat(Role.SYSTEM, it) }, onSeen = { t -> n.addPin(t, true, null) })
         a.shots = Shots(d, simulation, shouldStop = { a.paused }, report = { a.addChat(Role.SYSTEM, it) },
             pathCheck = { { fwd: Double -> a.safeForward(fwd) } })
@@ -470,7 +470,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val eyes = TextureEyes({ textureView }, { dji.hasRecentFrame() })
                 val a = makeAgent(d, eyes)
                 startGuard(d, a, TextureGray({ textureView }, { dji.hasRecentFrame() }))
-                attachFinder(d, a, eyes, simulation = false, hfov = 72.0)
+                attachFinder(d, a, eyes, simulation = false, hfov = 72.0, track = TextureGray({ textureView }, { dji.hasRecentFrame() }, 320))
                 drone = d
                 agent = a
                 mode = Mode.MAVIC
@@ -534,7 +534,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val a = makeAgent(d, TextureEyes({ textureView }, { v.hasRecentFrame }))
                 d.onLinkLost = { a.linkLost() }
                 startGuard(d, a, TextureGray({ textureView }, { v.hasRecentFrame }))
-                attachFinder(d, a, TextureEyes({ textureView }, { v.hasRecentFrame }), simulation = false)
+                attachFinder(d, a, TextureEyes({ textureView }, { v.hasRecentFrame }), simulation = false, track = TextureGray({ textureView }, { v.hasRecentFrame }, 320))
                 drone = d
                 video = v
                 agent = a
@@ -561,8 +561,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             d.connect()
             val a = makeAgent(d, PreviewEyes { previewView })
             CrashReport.mark("simulation : agent créé")
-            startGuard(d, a, PreviewGray { previewView })
-            attachFinder(d, a, PreviewEyes { previewView }, simulation = true)
+            startGuard(d, a, PreviewGray({ previewView }))
+            attachFinder(d, a, PreviewEyes { previewView }, simulation = true, track = PreviewGray({ previewView }, 320))
             CrashReport.mark("simulation : détecteur lancé")
             drone = d
             agent = a
@@ -970,6 +970,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .put("nav", runCatching { nav?.mapJson() }.getOrNull() ?: org.json.JSONObject.NULL)
             .put("activity", clean(s.activity))
             .put("rec", s.recording)
+            .put("track", agent?.follower?.let { f ->
+                f.box?.let { b ->
+                    org.json.JSONObject().put("cx", b.cx).put("cy", b.cy).put("w", b.w).put("h", b.h)
+                        .put("label", f.target ?: "").put("ok", System.currentTimeMillis() - f.confirmedAt < 4000)
+                }
+            } ?: org.json.JSONObject.NULL)
             .put("chat", chat)
             .put("top", listOf(s.mode.name, s.battery?.let { "$it %" } ?: "").joinToString(" "))
             .toString()

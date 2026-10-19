@@ -99,7 +99,7 @@ Par défaut (✋ **mode prudent**), l'IA te demande ton accord avant chaque dép
 ## Fonctions avancées (parle simplement à l'IA)
 
 - **« Va là »** : dans le casque, regarde (baisse la tête vers) un endroit au sol et dis « va là ». Le drone vise le centre de la caméra : distance = altitude ÷ tangente de l'inclinaison de la nacelle. La distance visée s'affiche à côté du réticule (⌖ 12 m). Sans casque, c'est le centre de l'image.
-- **Suivi** : « suis le chien », « suis-moi », « suis la voiture rouge ». L'IA repère la cible sur chaque image ; le Mavic la garde au centre et à la même taille (vitesse continue, 3 m/s max dehors, 0,6 m/s sans GPS) ; le Bebop la suit par petits pas. Ça s'arrête sur « stop », si la cible est perdue, à la limite du rayon ou quand la batterie baisse.
+- **Suivi** : « suis le chien », « suis-moi », « suis la voiture rouge ». C'est l'application qui pilote, aidée par l'IA : l'IA repère la cible au départ, puis le téléphone la suit lui-même sur la vidéo une dizaine de fois par seconde (suivi visuel local, sans Internet) et commande le drone à chaque image pour la garder au centre et à la même distance. Toutes les 3 s, l'IA vérifie en arrière-plan que c'est bien la cible et recale le suivi si besoin ; si la cible est perdue, le drone s'arrête et l'IA la recherche. Dans le casque, un cadre entoure la cible (vert : confirmée par l'IA, jaune : suivie par le téléphone seul). Vitesse max 3 m/s dehors, 0,6 m/s sans GPS ; le Bebop suit par petits pas. Ça s'arrête sur « stop », à la limite du rayon ou quand la batterie baisse.
 - **Points sur la carte** : « marque ce point » (ou « marque le portail »), puis « retourne au point 2 », « va au portail », « fais le tour des points ». Avec le GPS, les points sont gardés d'un vol à l'autre ; sans GPS, seulement pour le vol en cours. Ils s'effacent dans ⚙.
 - **Plans de cinéma**, filmés sur la carte mémoire du drone : « fais une orbite autour de la maison » (mets d'abord le sujet au centre de l'image), « un dronie » (recule en montant), « un panorama », « une révélation » (caméra qui se relève en avançant), « une fusée » (monte caméra vers le sol). Dans ⚙, tu peux aussi **filmer chaque vol en entier**.
 - **Zone fouillée** : pendant une recherche sur un terrain, les zones déjà regardées se colorent en vert sur la carte, les pistes apparaissent en orange et la cible trouvée en rouge. La carte montre aussi la trace du vol (pointillés jaunes) et, sans GPS, une carte locale quadrillée d'après la position estimée.
@@ -133,6 +133,7 @@ Les limites se règlent dans `app/src/main/java/com/bebopia/app/core/Drone.kt` (
 ## Structure du code
 
 - `core/` : du Kotlin pur, testé sur ordinateur.
+  - `vision/` : détecteur d'obstacles (`Looming`, `ObstacleGuard`) et suivi visuel d'une cible (`TargetTracker`).
   - `bebop/` : protocole Parrot ARSDK3 (connexion, commandes, événements) et flux vidéo RTP/H.264.
   - `ai/` : l'agent (boucle, sécurité, validation), les prompts, la recherche d'objets et de zone, la navigation sur la carte (`Navigator`), le suivi (`Follower`), les plans de cinéma (`Shots`), le journal de vol (`FlightLog`) et la mémoire (`Memory`).
   - `Drone.kt` : limites, position estimée, drone simulé.
