@@ -93,7 +93,7 @@ public class DjiLink {
         Aircraft a = aircraft();
         Gimbal g = a == null ? null : a.getGimbal();
         if (g == null) return;
-        g.rotate(new Rotation.Builder().mode(RotationMode.ABSOLUTE_ANGLE).pitch(degrees).time(0.2).build(), null);
+        g.rotate(new Rotation.Builder().mode(RotationMode.ABSOLUTE_ANGLE).pitch(degrees).time(0.1).build(), null);
     }
 
     public boolean hasRecentFrame() { return System.currentTimeMillis() - lastFrameAt < 1500; }

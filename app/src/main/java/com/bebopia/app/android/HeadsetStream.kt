@@ -231,7 +231,8 @@ class HeadsetStream(
 
     /**
      * Page du casque : vidéo plein écran, et bouton « Entrer en VR » (adresse https) où la nacelle
-     * suit la tête. En VR : gâchette = recentrer, grip = le drone tourne avec la tête (marche/arrêt).
+     * suit la tête. En VR : la nacelle suit la tête (haut/bas) et le drone son cap (gauche/droite), en 1 pour 1 ;
+     * gâchette = recentrer, grip = coupe/remet la rotation du drone.
      */
     private val PAGE = """
 <!doctype html>
@@ -286,7 +287,7 @@ vrBtn.onclick=startVR;
 
 const comp=document.createElement('canvas'); comp.width=1280; comp.height=780;
 const cx=comp.getContext('2d');
-let frame=null, follow=false, recenter=true, lastHead=0, needUpload=true;
+let frame=null, follow=true, recenter=true, lastHead=0, needUpload=true;
 
 async function frameLoop(){
   while(inVR){
@@ -337,7 +338,7 @@ async function startVR(){
     const q=pose.transform.orientation;
     const fx=-2*(q.x*q.z+q.w*q.y), fy=-2*(q.y*q.z-q.w*q.x), fz=-(1-2*(q.x*q.x+q.y*q.y));
     const yaw=Math.atan2(fx,-fz)*180/Math.PI, pitch=Math.asin(Math.max(-1,Math.min(1,fy)))*180/Math.PI;
-    if(t-lastHead>100){lastHead=t;
+    if(t-lastHead>50){lastHead=t;
       fetch('/head?p='+pitch.toFixed(1)+'&y='+yaw.toFixed(1)+'&f='+(follow?1:0)+'&c='+(recenter?1:0),{cache:'no-store'})
         .then(r=>r.json()).then(s=>{state=s;needUpload=true;}).catch(()=>{});
       recenter=false;}

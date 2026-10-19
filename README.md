@@ -72,8 +72,9 @@ Dans ⚙, active **Vue dans le casque**. L'app affiche une adresse du type `http
 - **Dehors, sans box** : active le **point d'accès mobile** du téléphone et connecte le Quest dessus (avec le Mavic relié par câble, la 4G continue de servir l'IA).
 
 **La caméra suit ta tête** : ouvre l'adresse en `https://…:8443` (le casque affiche un avertissement de sécurité la première fois, car le certificat est fabriqué par l'app : Avancé → Continuer), puis touche **🥽 Entrer en VR**. La vidéo s'affiche devant tes yeux et :
-- lever ou baisser la tête oriente la nacelle (Mavic : de 0° à -90° ; Bebop : caméra numérique, avec aussi gauche/droite) ;
-- **grip** (gâchette arrière) : le Mavic tourne sur lui-même pour suivre ta tête (marche/arrêt) ;
+- lever ou baisser la tête oriente la nacelle en 1 pour 1, dans ses limites (Mavic : de 0° à -90° ; Bebop : caméra numérique, avec aussi gauche/droite) ;
+- tourner la tête fait tourner le Mavic du même angle (90° de tête = 90° de drone, d'après sa boussole), dès l'entrée en VR. La nacelle du Mini ne pivote pas à gauche ou à droite : c'est le drone qui tourne ;
+- **grip** (gâchette arrière) : coupe ou remet la rotation du drone ;
 - **gâchette avant** : recentrer (la direction actuelle devient « devant »).
 La rotation par la tête s'arrête dès que l'IA déplace le drone, ou si le casque ne répond plus pendant une seconde.
 

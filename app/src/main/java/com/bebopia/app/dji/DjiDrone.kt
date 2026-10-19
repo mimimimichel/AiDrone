@@ -52,7 +52,7 @@ class DjiDrone(
         headSeenAt = now
         // Nacelle du Mini : de 0° (devant) à -90° (vers le sol)
         val p = pitch.coerceIn(-90.0, 0.0).toFloat()
-        if (abs(p - pitchSent) >= 1.5f && now - pitchSentAt >= 120) {
+        if (abs(p - pitchSent) >= 1f && now - pitchSentAt >= 60) {
             link.gimbalPitchFast(p)
             pitchSent = p
             pitchSentAt = now
@@ -70,11 +70,14 @@ class DjiDrone(
 
     private fun angleDiff(a: Double): Double = ((a + 540.0) % 360.0) - 180.0
 
-    /** Fait tourner le drone vers la direction de la tête, 10 fois par seconde. */
+    /**
+     * Le drone prend le même cap que la tête, en 1 pour 1 d'après sa boussole :
+     * 90° de tête = 90° de drone. Correction 20 fois par seconde.
+     */
     private fun followLoop() {
         var sending = false
         while (true) {
-            Thread.sleep(100)
+            Thread.sleep(50)
             val active = headFollow && System.currentTimeMillis() - headSeenAt < 1000 && !moving && link.flying()
             val center = droneYawCenter
             if (!active || center == null) {
@@ -86,7 +89,8 @@ class DjiDrone(
             }
             val target = center + (headYaw - headYawCenter)
             val err = angleDiff(target - link.heading())
-            val rate = if (abs(err) < 3) 0.0 else (err * 1.5).coerceIn(-60.0, 60.0)
+            // Vitesse proportionnelle à l'écart (rapide si la tête a beaucoup tourné, douce à l'arrivée)
+            val rate = if (abs(err) < 1.5) 0.0 else (err * 2.5).coerceIn(-100.0, 100.0)
             link.sendSticks(0f, 0f, rate.toFloat(), 0f)
             sending = true
         }
