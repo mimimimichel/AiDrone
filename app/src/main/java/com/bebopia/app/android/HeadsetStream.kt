@@ -389,6 +389,7 @@ function draw(){
   if(s.video===false&&s.mode!=='NONE')warns.push([WARN,'PAS DE VIDÉO']);
   if(tel.imuPreheating)warns.push([WARN,'PRÉCHAUFFAGE']);
   if(s.paused)warns.push([WARN,'IA EN PAUSE']);
+  if(s.confirm===false)warns.push([WARN,'MODE CONFIANCE']);
   let wx=W-28;
   for(const [c,w] of warns.slice(0,4).reverse()){g.font='bold 22px sans-serif';const ww=g.measureText(w).width+28;wx-=ww;
     g.fillStyle=c;rr(wx,40,ww,44,8);g.fill();t(w,wx+ww/2,70,22,'#000','center',true);wx-=10;}
@@ -523,7 +524,7 @@ function drawRight(s){
   t(st[0],x+18,VY+86,40,st[1],'left',true);
   t((s.voice||'Conversation fermée'),x+18,VY+124,20,'#fff');
   t('Actions '+(s.steps||0)+' / '+(s.maxSteps||40)+'  ·  pas max '+f1(s.maxStep)+' m',x+18,VY+156,19,GREY);
-  t(s.confirm?'Validation de chaque déplacement':'Déplacements sans validation',x+18,VY+180,18,s.confirm?HUD:WARN);
+  t(s.confirm?'✋ Mode prudent : je valide':'🤝 Mode confiance : l\'IA agit seule',x+18,VY+180,18,s.confirm?HUD:WARN,'left',!s.confirm);
   // Plan
   const py=VY+202;panel(x,py,w,290,'PLAN');
   let y=py+64;

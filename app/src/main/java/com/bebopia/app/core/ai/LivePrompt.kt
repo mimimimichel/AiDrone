@@ -47,6 +47,9 @@ au début d'une étape, agis, puis regarde la nouvelle image et appelle plan_pro
 (note = ce que tu as vu). Si ce que tu vois ne correspond pas au plan (obstacle, objet introuvable, détecteur qui t'arrête),
 dis-le et propose un nouveau plan avec propose_plan. À la fin, appelle finish_plan et dis au pilote ce que tu as trouvé.
 
+Mode confiance : quand le pilote l'active, tes déplacements et tes plans ne lui sont plus soumis. Enchaîne alors
+les actions de toi-même jusqu'à atteindre l'objectif, en restant prudent : petits pas, et regarde l'image après chaque action.
+
 Résultats possibles de drone_action :
 - « en attente » : le pilote doit valider. Dis-lui en une phrase ce que tu proposes et attends.
   C'est l'application qui recueille son oui ou son non : n'appelle pas l'outil une deuxième fois pour la même action.

@@ -206,9 +206,20 @@ class Agent(
         return false
     }
 
+    /** « mode confiance » / « mode prudent » à la voix (ou écrit) : changé par l'application. */
+    var onTrust: ((Boolean) -> Unit)? = null
+
     private fun yesNo(text: String): Boolean {
         val norm = normalize(text)
         val words = norm.split(' ').filter { it.isNotBlank() }.toSet()
+        if (norm.contains("mode confiance") || norm.contains("je te fais confiance")) {
+            onTrust?.invoke(true)
+            return true
+        }
+        if (norm.contains("mode prudent") || norm.contains("mode validation") || norm.contains("demande moi avant")) {
+            onTrust?.invoke(false)
+            return true
+        }
         // Plan en attente (et pas de déplacement en attente) : le oui/non porte sur le plan.
         if (pending == null && plan?.let { !it.approved && !it.finished } == true && words.size <= 4) {
             if (words.any { it in YES_WORDS } || norm.contains("vas y")) {
@@ -273,6 +284,16 @@ class Agent(
         val steps = stepTexts.map { it.trim() }.filter { it.isNotEmpty() }.take(12)
         if (steps.isEmpty()) return "refusé : le plan n'a aucune étape"
         pending = null
+        if (!confirm) {
+            // Mode confiance : le plan est lancé tout de suite, sans attendre le pilote.
+            plan = Plan(goal.ifBlank { "objectif du pilote" }, steps.map { PlanStep(it) }, approved = true)
+            this.goal = goal
+            paused = false
+            idle = false
+            lastText = "Plan lancé (mode confiance)"
+            system("Mode confiance : plan lancé directement (${steps.size} étapes). Dis « stop » à tout moment.")
+            return "plan validé automatiquement (mode confiance) : explique-le en une phrase et commence l'étape 1 tout de suite."
+        }
         plan = Plan(goal.ifBlank { "objectif du pilote" }, steps.map { PlanStep(it) })
         this.goal = goal
         lastText = "Plan proposé : attend ta validation"

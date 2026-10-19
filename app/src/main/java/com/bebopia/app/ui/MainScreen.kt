@@ -143,6 +143,10 @@ fun MainScreen(vm: MainViewModel) {
             if (s.mode == Mode.BEBOP || s.mode == Mode.MAVIC || s.mode == Mode.SIM) {
                 TextButton(onClick = { vm.disconnect() }) { Text("Déconnecter", fontSize = 13.sp) }
             }
+            // Mode confiance (🤝) ou prudent (✋) : un appui pour changer
+            TextButton(onClick = { vm.setTrust(s.confirm) }) {
+                Text(if (s.confirm) "✋" else "🤝", fontSize = 20.sp)
+            }
             TextButton(onClick = { showSettings = true }) { Text("⚙", fontSize = 22.sp, color = Color.White) }
         }
 
@@ -587,7 +591,7 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                SettingSwitch("Valider chaque déplacement (conseillé)", confirm) { confirm = it }
+                SettingSwitch("🤝 Mode confiance : l'IA agit sans me demander (déplacements et plans)", !confirm) { confirm = !it }
                 Text(
                     "Distance max par pas : %.1f m".format(Math.round(maxStep * 10) / 10.0),
                     modifier = Modifier.padding(top = 12.dp),

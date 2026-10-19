@@ -82,6 +82,10 @@ La rotation par la tête s'arrête dès que l'IA déplace le drone, ou si le cas
 
 **Parler à l'IA depuis le casque** : sur la page `https`, touche **🎙 Parler à l'IA ici** (autorise le micro la première fois), ou entre en VR : l'audio démarre aussi. Le micro du Quest remplace celui du téléphone et la voix de l'IA sort dans le casque (le téléphone se tait). La conversation s'ouvre toute seule si elle ne l'était pas. Tu peux toujours couper la parole à l'IA, et « stop » / « atterris » restent instantanés.
 
+## Mode confiance
+
+Par défaut (✋ **mode prudent**), l'IA te demande ton accord avant chaque déplacement et chaque plan. En **🤝 mode confiance**, elle agit seule : ses plans sont lancés aussitôt et elle enchaîne les actions jusqu'à l'objectif. Pour changer : dis « mode confiance » ou « mode prudent », touche ✋/🤝 en haut de l'écran, ou passe par ⚙. Le cockpit du casque affiche « MODE CONFIANCE ». Les garde-fous restent actifs (plafond, rayon, détecteur d'obstacles, batterie), et « stop » / « atterris » agissent toujours instantanément.
+
 ## Garde-fous
 
 - L'IA ne commande jamais les moteurs : elle propose une action, le code la vérifie puis l'exécute.

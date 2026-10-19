@@ -324,6 +324,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             else a.addChat(Role.SYSTEM, "Appuie sur 🎤 pour ouvrir la conversation avec le drone.")
         }
         a.onEvent = { text, reply -> live?.takeIf { it.active }?.event(text, reply) }
+        a.onTrust = { on -> setTrust(on) }
         agentEyes = eyes
         synchronized(localChat) {
             localChat.forEach { a.addChat(it.role, it.text) }
@@ -801,6 +802,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .put("chat", chat)
             .put("top", listOf(s.mode.name, s.battery?.let { "$it %" } ?: "").joinToString(" "))
             .toString()
+    }
+
+    /** Mode confiance : l'IA agit sans demander l'accord du pilote (garde-fous inchangés). */
+    fun setTrust(on: Boolean) {
+        if (confirm == !on) return
+        confirm = !on
+        agent?.confirm = !on
+        // Faire confiance, c'est aussi la laisser piloter : on la sort de pause.
+        agent?.let { if (on && it.paused) it.togglePause() }
+        sysMessage(if (on) "🤝 Mode confiance : l'IA agit sans te demander, plans compris. Garde-fous actifs ; dis « stop » à tout moment."
+            else "✋ Mode prudent : l'IA te demande ton accord avant chaque déplacement et chaque plan.")
+        live?.takeIf { it.active }?.event(
+            if (on) "Le pilote passe en MODE CONFIANCE : plus besoin de son accord pour tes déplacements ni pour tes plans. Reste prudent."
+            else "Le pilote repasse en MODE PRUDENT : chaque déplacement et chaque plan doivent de nouveau être validés.",
+            true,
+        )
+        refresh()
     }
 
     fun saveSettings(
