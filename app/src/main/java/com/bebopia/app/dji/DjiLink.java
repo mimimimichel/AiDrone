@@ -13,6 +13,7 @@ import dji.common.flightcontroller.virtualstick.FlightCoordinateSystem;
 import dji.common.flightcontroller.virtualstick.RollPitchControlMode;
 import dji.common.flightcontroller.virtualstick.VerticalControlMode;
 import dji.common.flightcontroller.virtualstick.YawControlMode;
+import dji.common.camera.SettingsDefinitions;
 import dji.common.gimbal.Rotation;
 import dji.common.gimbal.RotationMode;
 import dji.common.util.CommonCallbacks;
@@ -334,6 +335,33 @@ public class DjiLink {
         }
         Rotation r = new Rotation.Builder().mode(RotationMode.ABSOLUTE_ANGLE).pitch(degrees).time(1.0).build();
         g.rotate(r, cb(d));
+    }
+
+    /**
+     * Remet la caméra en exposition automatique (des réglages manuels laissés dans DJI Fly
+     * peuvent rendre l'image très sombre). brighter : correction +1 pour les pièces peu éclairées.
+     */
+    public void autoExposure(boolean brighter, final Done d) {
+        BaseProduct p = DJISDKManager.getInstance().getProduct();
+        final dji.sdk.camera.Camera cam = p == null ? null : p.getCamera();
+        if (cam == null) {
+            if (d != null) d.done("caméra indisponible");
+            return;
+        }
+        final SettingsDefinitions.ExposureCompensation ev =
+            brighter ? SettingsDefinitions.ExposureCompensation.P_1_0 : SettingsDefinitions.ExposureCompensation.N_0_0;
+        cam.setAELock(false, null);
+        cam.setExposureMode(SettingsDefinitions.ExposureMode.PROGRAM, new CommonCallbacks.CompletionCallback() {
+            @Override
+            public void onResult(DJIError e1) {
+                cam.setExposureCompensation(ev, cb(d == null ? null : new Done() {
+                    @Override
+                    public void done(String e2) {
+                        d.done(e1 != null ? "mode auto : " + e1.getDescription() : e2);
+                    }
+                }));
+            }
+        });
     }
 
     // ---- vidéo ----------------------------------------------------------------------------------

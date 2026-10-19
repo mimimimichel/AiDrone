@@ -1,6 +1,10 @@
 package com.bebopia.app.android
 
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Paint
 import android.os.Handler
 import android.os.Looper
 import android.util.Base64
@@ -15,12 +19,46 @@ import java.util.concurrent.TimeUnit
 
 private const val AI_WIDTH = 768
 
+/** Luminosité moyenne (0-255) d'une image, mesurée sur une version réduite. */
+fun meanLuma(b: Bitmap): Double {
+    val s = Bitmap.createScaledBitmap(b, 32, 18, true)
+    val px = IntArray(32 * 18)
+    s.getPixels(px, 0, 32, 0, 0, 32, 18)
+    if (s !== b) s.recycle()
+    return px.sumOf { c -> 0.299 * ((c shr 16) and 0xFF) + 0.587 * ((c shr 8) and 0xFF) + 0.114 * (c and 0xFF) } / px.size
+}
+
+/** Gain pour ramener une image sombre vers une luminosité normale (1 = inchangé, 3,5 au plus). */
+fun brightnessGain(mean: Double): Float = if (mean <= 0.5) 3.5f else (110.0 / mean).coerceIn(1.0, 3.5).toFloat()
+
+/** Filtre de couleur qui multiplie la luminosité (null si inutile). */
+fun gainFilter(gain: Float): ColorMatrixColorFilter? {
+    if (gain < 1.12f) return null
+    val m = ColorMatrix(floatArrayOf(
+        gain, 0f, 0f, 0f, 4f,
+        0f, gain, 0f, 0f, 4f,
+        0f, 0f, gain, 0f, 4f,
+        0f, 0f, 0f, 1f, 0f,
+    ))
+    return ColorMatrixColorFilter(m)
+}
+
+/** Éclaircit une image trop sombre (pour l'IA). */
+private fun autoBrighten(src: Bitmap): Bitmap {
+    val filter = gainFilter(brightnessGain(meanLuma(src))) ?: return src
+    val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+    Canvas(out).drawBitmap(src, 0f, 0f, Paint().apply { colorFilter = filter })
+    return out
+}
+
 private fun toJpegBase64(src: Bitmap): String {
-    val scaled = if (src.width > AI_WIDTH) {
+    val sized = if (src.width > AI_WIDTH) {
         Bitmap.createScaledBitmap(src, AI_WIDTH, (AI_WIDTH.toFloat() * src.height / src.width).toInt(), true)
     } else {
         src
     }
+    val scaled = autoBrighten(sized)
+    if (scaled !== sized && sized !== src) sized.recycle()
     val out = ByteArrayOutputStream()
     scaled.compress(Bitmap.CompressFormat.JPEG, 80, out)
     if (scaled !== src) scaled.recycle()

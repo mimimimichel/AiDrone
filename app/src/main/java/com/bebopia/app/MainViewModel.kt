@@ -177,7 +177,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state
 
+    /** Éclaircit l'affichage de la vidéo du drone quand l'image est sombre (mesure toutes les 1,5 s). */
+    private fun startDisplayGain() {
+        viewModelScope.launch(Dispatchers.Default) {
+            var applied = 1f
+            while (isActive) {
+                delay(1500)
+                if (mode != Mode.MAVIC && mode != Mode.BEBOP) continue
+                val tv = textureView ?: continue
+                val bmp = kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    if (tv.isAvailable) runCatching { tv.getBitmap(64, 36) }.getOrNull() else null
+                } ?: continue
+                val gain = com.bebopia.app.android.brightnessGain(com.bebopia.app.android.meanLuma(bmp))
+                bmp.recycle()
+                // Lissé, et seulement si ça change vraiment (évite le scintillement)
+                val target = applied * 0.5f + gain * 0.5f
+                if (kotlin.math.abs(target - applied) > 0.08f) {
+                    applied = target
+                    val filter = com.bebopia.app.android.gainFilter(applied)
+                    kotlinx.coroutines.withContext(Dispatchers.Main) {
+                        tv.setLayerPaint(filter?.let { f -> android.graphics.Paint().apply { colorFilter = f } })
+                    }
+                }
+            }
+        }
+    }
+
     init {
+        startDisplayGain()
         voice.init()
         voice.speakEnabled = speak
         voice.robot = robotVoice
@@ -357,6 +384,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         a.addChat(Role.SYSTEM, "Vidéo reçue mais pas affichée ($stats).")
                     } else {
                         val mean = g.px.average()
+                        if (mean < 60) {
+                            // Image sombre : on demande à la caméra d'exposer plus (+1 IL).
+                            val err = d.brighter(true)
+                            a.addChat(Role.SYSTEM, if (err == null) "Image sombre : caméra réglée plus claire (+1), et affichage éclairci automatiquement."
+                                else "Image sombre ; réglage de la caméra refusé ($err). L'affichage est éclairci automatiquement.")
+                        }
                         if (mean < 25) a.addChat(Role.SYSTEM, "L'image du Mavic est très sombre (luminosité %.0f/255). ".format(mean) +
                             "Vérifie que le cache de protection de la nacelle est bien retiré et allume la lumière : " +
                             "le drone en a aussi besoin pour tenir sa position sans GPS. ($stats)")

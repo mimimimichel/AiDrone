@@ -52,7 +52,11 @@ class DjiDrone(
         if (!link.isConnected()) throw IllegalStateException("drone DJI non connecté")
         applyLimits()
         call { link.enableVirtualStick(it) }?.let { log("mode pilotage par l'application : $it") }
+        call(6) { link.autoExposure(false, it) }?.let { log("exposition auto de la caméra : $it") }
     }
+
+    /** Caméra plus claire (+1 IL), pour une pièce peu éclairée. */
+    fun brighter(on: Boolean): String? = call(6) { link.autoExposure(on, it) }
 
     override fun disconnect() {
         runCatching { call(3) { link.disableVirtualStick(it) } }
