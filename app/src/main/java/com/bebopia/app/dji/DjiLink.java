@@ -59,8 +59,23 @@ public class DjiLink {
     private volatile boolean motorsOn = false;
     private volatile boolean lowBattery = false;
     private volatile long lastFrameAt = 0L;
-    private DJICodecManager codec;
-    private VideoFeeder.VideoDataListener videoListener;
+    private volatile DJICodecManager codec;
+    private volatile VideoFeeder.VideoFeed listenedFeed;
+    private volatile long packets = 0;
+    private volatile long packetsAtCheck = 0;
+    private volatile long checkAt = 0;
+    private volatile double packetRate = 0;
+
+    /** Un seul abonnement au flux vidéo, refait à chaque changement côté drone (le flux peut être recréé). */
+    private final VideoFeeder.VideoDataListener videoListener = new VideoFeeder.VideoDataListener() {
+        @Override
+        public void onReceive(byte[] buffer, int size) {
+            lastFrameAt = System.currentTimeMillis();
+            packets++;
+            DJICodecManager c = codec;
+            if (c != null) c.sendDataToDecoder(buffer, size);
+        }
+    };
 
     public boolean isRegistered() { return registered; }
     public Integer battery() { return battery; }
@@ -172,9 +187,38 @@ public class DjiLink {
         return a.getModel().getDisplayName();
     }
 
+    /** (Ré)abonne l'application au flux vidéo principal du drone. */
+    public synchronized void ensureVideoListener() {
+        try {
+            VideoFeeder vf = VideoFeeder.getInstance();
+            if (vf == null) return;
+            VideoFeeder.VideoFeed feed = vf.getPrimaryVideoFeed();
+            if (feed == null) return;
+            if (listenedFeed != null && listenedFeed != feed) listenedFeed.removeVideoDataListener(videoListener);
+            feed.removeVideoDataListener(videoListener);
+            feed.addVideoDataListener(videoListener);
+            listenedFeed = feed;
+        } catch (Throwable t) {
+            Log.e(TAG, "abonnement vidéo", t);
+        }
+    }
+
+    /** Débit du flux vidéo reçu et état du décodeur, pour le diagnostic. */
+    public String videoStats() {
+        long now = System.currentTimeMillis();
+        if (now - checkAt > 1500) {
+            if (checkAt > 0) packetRate = (packets - packetsAtCheck) * 1000.0 / (now - checkAt);
+            packetsAtCheck = packets;
+            checkAt = now;
+        }
+        return String.format(java.util.Locale.FRANCE, "vidéo DJI : %.0f paquets/s, %d reçus, décodeur %s",
+            packetRate, packets, codec != null ? "prêt" : "absent");
+    }
+
     private void attachCallbacks() {
         Aircraft a = aircraft();
         if (a == null) return;
+        ensureVideoListener();
         FlightController f = a.getFlightController();
         if (f != null) {
             f.setStateCallback(new FlightControllerState.Callback() {
@@ -293,37 +337,26 @@ public class DjiLink {
     }
 
     // ---- vidéo ----------------------------------------------------------------------------------
+    /** Décode la vidéo dans la texture affichée à l'écran. */
     public synchronized void startVideo(Context ctx, SurfaceTexture st, int w, int h) {
         stopVideo();
         if (!registered || st == null) return;
         try {
             codec = new DJICodecManager(ctx.getApplicationContext(), st, w, h);
-            final DJICodecManager c = codec;
-            videoListener = new VideoFeeder.VideoDataListener() {
-                @Override
-                public void onReceive(byte[] buffer, int size) {
-                    lastFrameAt = System.currentTimeMillis();
-                    c.sendDataToDecoder(buffer, size);
-                }
-            };
-            VideoFeeder.getInstance().getPrimaryVideoFeed().addVideoDataListener(videoListener);
+            ensureVideoListener();
         } catch (Throwable t) {
             Log.e(TAG, "vidéo", t);
             status("Vidéo DJI indisponible : " + t.getMessage());
         }
     }
 
+    /** Arrête le décodage (l'abonnement au flux reste, pour le diagnostic). */
     public synchronized void stopVideo() {
-        try {
-            if (videoListener != null && VideoFeeder.getInstance() != null && VideoFeeder.getInstance().getPrimaryVideoFeed() != null) {
-                VideoFeeder.getInstance().getPrimaryVideoFeed().removeVideoDataListener(videoListener);
-            }
-        } catch (Throwable ignored) { }
-        videoListener = null;
-        if (codec != null) {
-            try { codec.cleanSurface(); } catch (Throwable ignored) { }
-            try { codec.destroyCodec(); } catch (Throwable ignored) { }
-        }
+        DJICodecManager c = codec;
         codec = null;
+        if (c != null) {
+            try { c.cleanSurface(); } catch (Throwable ignored) { }
+            try { c.destroyCodec(); } catch (Throwable ignored) { }
+        }
     }
 }

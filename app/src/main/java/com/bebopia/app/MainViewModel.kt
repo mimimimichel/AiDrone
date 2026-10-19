@@ -230,7 +230,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             hasVideo = video?.hasRecentFrame ?: if (mode == Mode.MAVIC) djiOrNull?.hasRecentFrame() ?: false else (mode == Mode.SIM),
             listening = listening,
             voice = voiceLabel,
-            network = router.describe,
+            network = if (mode == Mode.MAVIC) djiOrNull?.videoStats() ?: router.describe else router.describe,
             chat = a?.chat ?: synchronized(localChat) { localChat.toList() },
             confirm = confirm,
             speak = speak,
@@ -345,13 +345,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // Image très sombre ? (pièce sombre, caméra masquée, ou vidéo mal décodée)
                 viewModelScope.launch(Dispatchers.IO) {
                     delay(6000)
-                    val g = TextureGray({ textureView }, { dji.hasRecentFrame() }).grab()
-                    if (g == null) {
-                        a.addChat(Role.SYSTEM, "Pas encore d'image du Mavic : vérifie que la caméra n'est pas masquée et que DJI Fly est fermée.")
+                    dji.videoStats(); delay(2000)
+                    val stats = dji.videoStats()
+                    val g = TextureGray({ textureView }, { true }).grab()
+                    if (!dji.hasRecentFrame()) {
+                        // Pas de données : on se réabonne au flux et on réessaie.
+                        dji.ensureVideoListener()
+                        a.addChat(Role.SYSTEM, "Le Mavic n'envoie pas de vidéo ($stats). Vérifie que DJI Fly est bien fermée " +
+                            "(et pas en arrière-plan), puis débranche et rebranche le câble.")
+                    } else if (g == null) {
+                        a.addChat(Role.SYSTEM, "Vidéo reçue mais pas affichée ($stats).")
                     } else {
                         val mean = g.px.average()
                         if (mean < 25) a.addChat(Role.SYSTEM, "L'image du Mavic est très sombre (luminosité %.0f/255). ".format(mean) +
-                            "Allume la lumière : en plus, le drone a besoin de lumière pour tenir sa position sans GPS.")
+                            "Vérifie que le cache de protection de la nacelle est bien retiré et allume la lumière : " +
+                            "le drone en a aussi besoin pour tenir sa position sans GPS. ($stats)")
                     }
                 }
             } catch (e: Exception) {

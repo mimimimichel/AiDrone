@@ -18,8 +18,8 @@ android {
         applicationId = "com.bebopia.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "1.0.2"
+        versionCode = 14
+        versionName = "1.0.3"
         manifestPlaceholders["DJI_API_KEY"] = djiApiKey
         // Le kit DJI n'existe que pour les processeurs ARM (tous les téléphones récents).
         ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
