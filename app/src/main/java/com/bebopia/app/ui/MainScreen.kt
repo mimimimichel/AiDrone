@@ -120,6 +120,10 @@ fun MainScreen(vm: MainViewModel) {
         // Barre du haut
         Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Bebop IA", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            val version = remember {
+                runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: ""
+            }
+            Text(" v$version", color = Muted, fontSize = 11.sp)
             Spacer(Modifier.width(10.dp))
             val (label, color) = when (s.mode) {
                 Mode.BEBOP -> (if (s.linkUp) "Bebop connecté" else "Liaison perdue") to (if (s.linkUp) Ok else Danger)
@@ -402,6 +406,7 @@ private fun CameraPreview(vm: MainViewModel) {
     val providerHolder = remember { arrayOfNulls<ProcessCameraProvider>(1) }
     AndroidView(
         factory = { ctx ->
+            com.bebopia.app.CrashReport.mark("caméra : création de l'aperçu")
             PreviewView(ctx).apply {
                 implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                 scaleType = PreviewView.ScaleType.FILL_CENTER
@@ -409,12 +414,14 @@ private fun CameraPreview(vm: MainViewModel) {
                 val future = ProcessCameraProvider.getInstance(ctx)
                 future.addListener({
                     try {
+                        com.bebopia.app.CrashReport.mark("caméra : fournisseur prêt")
                         val provider = future.get()
                         providerHolder[0] = provider
                         val preview = Preview.Builder().build()
                         preview.setSurfaceProvider(surfaceProvider)
                         provider.unbindAll()
                         provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview)
+                        com.bebopia.app.CrashReport.mark("caméra : ouverte")
                     } catch (e: Throwable) {
                         vm.sysMessage("Caméra indisponible : ${e.javaClass.simpleName} ${e.message ?: ""}")
                     }

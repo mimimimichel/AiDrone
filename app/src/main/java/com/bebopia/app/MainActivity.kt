@@ -27,8 +27,9 @@ import com.bebopia.app.ui.MainScreen
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        CrashReport.install(this)
         val lastCrash = CrashReport.take(this)
+        CrashReport.install(this)
+        CrashReport.mark("lancement")
         enableEdgeToEdge()
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) // l'écran reste allumé en vol
         setContent {

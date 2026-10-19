@@ -288,16 +288,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun startSimulation() {
         if (mode != Mode.NONE) return
+        CrashReport.mark("simulation : début")
         try {
             val d = SimDrone(limits, ::log)
             d.connect()
             val a = makeAgent(d, PreviewEyes { previewView })
+            CrashReport.mark("simulation : agent créé")
             startGuard(d, a, PreviewGray { previewView })
+            CrashReport.mark("simulation : détecteur lancé")
             drone = d
             agent = a
             mode = Mode.SIM
             a.start()
             a.addChat(Role.SYSTEM, "Simulation : la caméra du téléphone remplace celle du drone, rien ne vole. Parle à l'IA ou appuie sur « ▶ IA ».")
+            CrashReport.mark("simulation : prête")
         } catch (e: Throwable) {
             Log.e("BebopIA", "simulation", e)
             guard?.stop()
