@@ -334,9 +334,10 @@ private fun telemetry(s: UiState): String {
     if (s.mode != Mode.BEBOP && s.mode != Mode.MAVIC && s.mode != Mode.SIM) return "Réseau : ${s.network}"
     // La batterie est passée en paramètre, jamais collée dans le modèle : son « % » ferait planter format().
     val bat = s.battery?.let { "$it %" } ?: "?"
+    val casque = if (s.headsetViewers > 0) "   • 🥽 casque" else ""
     return "🔋 %s   ⬆ %.1f m   ↔ %.1f m   • %s   • étape %d/%d   • %s".format(
         bat, s.altitude, s.distance, s.droneState, s.steps, s.maxSteps, s.network,
-    )
+    ) + casque
 }
 
 @Composable
@@ -615,6 +616,16 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                SettingSwitch("Vue dans le casque (Meta Quest)", s.headsetOn) { vm.setHeadset(it) }
+                if (s.headsetOn) {
+                    Text(
+                        if (s.headsetUrl.isEmpty()) "Connecte le téléphone au même Wi-Fi que le casque."
+                        else "Dans le navigateur du casque : ${s.headsetUrl}" +
+                            if (s.headsetViewers > 0) " (${s.headsetViewers} connecté)" else "",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
                 SettingSwitch("Le drone parle à voix haute", speak) { speak = it }
                 SettingSwitch("Voix de robot", robotVoice) { robotVoice = it }
                 Text(

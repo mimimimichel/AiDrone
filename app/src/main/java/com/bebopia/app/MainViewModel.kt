@@ -11,6 +11,7 @@ import androidx.lifecycle.viewModelScope
 import com.bebopia.app.android.BebopVideo
 import com.bebopia.app.android.GeminiLive
 import com.bebopia.app.android.GeminiVision
+import com.bebopia.app.android.HeadsetStream
 import com.bebopia.app.core.ai.ObjectFinder
 import com.bebopia.app.dji.DjiDrone
 import com.bebopia.app.dji.DjiLink
@@ -86,6 +87,9 @@ data class UiState(
     val guardWatching: Boolean = false,
     val guardTtc: Double? = null,
     val plan: Plan? = null,
+    val headsetOn: Boolean = false,
+    val headsetUrl: String = "",
+    val headsetViewers: Int = 0,
     val obstacle: Boolean = false,
 )
 
@@ -273,6 +277,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             guardWatching = guard?.watching ?: false,
             guardTtc = guard?.lastTtcS,
             plan = a?.plan,
+            headsetOn = headset != null,
+            headsetUrl = headset?.urls()?.firstOrNull() ?: "",
+            headsetViewers = headset?.viewerCount ?: 0,
             obstacle = System.currentTimeMillis() - obstacleAt < 3000,
         )
     }
@@ -643,6 +650,59 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
+    // ---- vue dans le casque (Meta Quest) ------------------------------------------------------
+    @Volatile private var headset: HeadsetStream? = null
+
+    fun setHeadset(on: Boolean) {
+        if (!on) {
+            headset?.stop()
+            headset = null
+            sysMessage("Vue dans le casque arrêtée.")
+            refresh()
+            return
+        }
+        if (headset != null) return
+        val h = HeadsetStream(grab = ::grabForHeadset, state = ::headsetState)
+        if (!h.start()) {
+            sysMessage("Impossible de lancer la vue dans le casque (port 8080 occupé ?).")
+            return
+        }
+        headset = h
+        val urls = h.urls()
+        sysMessage(
+            if (urls.isEmpty()) "Vue dans le casque prête, mais le téléphone n'est sur aucun Wi-Fi : connecte-le au même Wi-Fi que le casque, ou active son partage de connexion."
+            else "Dans le navigateur du Quest (même Wi-Fi que le téléphone), ouvre : ${urls.joinToString("  ou  ")}",
+        )
+        refresh()
+    }
+
+    /** Image pour le casque (appelée sur le thread de l'interface). */
+    private fun grabForHeadset(): android.graphics.Bitmap? = when (mode) {
+        Mode.BEBOP, Mode.MAVIC -> textureView?.takeIf { it.isAvailable }?.getBitmap(960, 540)
+        Mode.SIM -> previewView?.bitmap?.let { b ->
+            val w = 960
+            val h = (w.toFloat() * b.height / b.width).toInt().coerceAtLeast(1)
+            android.graphics.Bitmap.createScaledBitmap(b, w, h, true).also { if (it !== b) b.recycle() }
+        }
+        else -> null
+    }
+
+    /** Infos affichées dans le casque. */
+    private fun headsetState(): String {
+        val s = _state.value
+        val bat = s.battery?.let { "🔋 $it %" } ?: ""
+        val top = listOf(
+            when (s.mode) { Mode.BEBOP -> "Bebop"; Mode.MAVIC -> "Mavic"; Mode.SIM -> "Simulation"; else -> "Drone non connecté" },
+            bat,
+            if (s.mode == Mode.NONE) "" else "⬆ %.1f m".format(s.altitude),
+            if (s.mode == Mode.NONE) "" else s.droneState,
+            if (s.paused) "IA en pause" else "IA active",
+            s.plan?.let { p -> if (p.running) "Plan : ${p.goal}" else "" } ?: "",
+        ).filter { it.isNotBlank() }.joinToString("   ")
+        val say = s.chat.lastOrNull { it.role == Role.DRONE }?.text ?: ""
+        return org.json.JSONObject().put("top", top).put("say", say).put("obstacle", s.obstacle).toString()
+    }
+
     fun saveSettings(
         key: String, gemini: String, model: String, confirm: Boolean, speak: Boolean, bargeIn: Boolean,
         maxStep: Double, guardOn: Boolean, robotVoice: Boolean, ceiling: Double, radius: Double,
@@ -680,6 +740,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
+        headset?.stop()
         stopLive()
         disconnect()
         voice.release()

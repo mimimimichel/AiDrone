@@ -43,8 +43,8 @@ fun gainFilter(gain: Float): ColorMatrixColorFilter? {
     return ColorMatrixColorFilter(m)
 }
 
-/** Éclaircit une image trop sombre (pour l'IA). */
-private fun autoBrighten(src: Bitmap): Bitmap {
+/** Éclaircit une image trop sombre (pour l'IA et le casque). Renvoie src si rien à faire. */
+fun brighten(src: Bitmap): Bitmap {
     val filter = gainFilter(brightnessGain(meanLuma(src))) ?: return src
     val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
     Canvas(out).drawBitmap(src, 0f, 0f, Paint().apply { colorFilter = filter })
@@ -57,7 +57,7 @@ private fun toJpegBase64(src: Bitmap): String {
     } else {
         src
     }
-    val scaled = autoBrighten(sized)
+    val scaled = brighten(sized)
     if (scaled !== sized && sized !== src) sized.recycle()
     val out = ByteArrayOutputStream()
     scaled.compress(Bitmap.CompressFormat.JPEG, 80, out)

@@ -64,6 +64,12 @@ Avant de voler dehors, règle dans ⚙ le **plafond** (2 à 120 m, la limite lé
 
 **Voix de robot** (activée par défaut, réglable dans ⚙) : la voix de l'IA passe par un effet métallique (modulation en anneau et résonance, façon robot de film), et l'IA adopte un ton un peu mécanique.
 
+## Voir ce que voit le drone dans un casque (Meta Quest)
+
+Dans ⚙, active **Vue dans le casque**. L'app affiche une adresse du type `http://192.168.1.23:8080` : ouvre-la dans le navigateur du Quest (ou de n'importe quel écran). Tu vois la vidéo du drone en grand, avec la batterie, l'altitude, ce que dit l'IA et les alertes d'obstacle. Le téléphone et le casque doivent être sur le même réseau :
+- **Mavic Mini** (relié par câble) : le Wi-Fi de la maison, ou le partage de connexion du téléphone ;
+- **Bebop** : connecte aussi le casque au Wi-Fi du Bebop.
+
 ## Garde-fous
 
 - L'IA ne commande jamais les moteurs : elle propose une action, le code la vérifie puis l'exécute.
