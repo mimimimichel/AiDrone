@@ -4,6 +4,12 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Clé d'app DJI (developer.dji.com), liée au nom de paquet com.bebopia.app.
+// Fournie par la propriété Gradle djiApiKey ou la variable d'environnement DJI_API_KEY (secret GitHub).
+val djiApiKey: String = (project.findProperty("djiApiKey") as String?)?.takeIf { it.isNotBlank() }
+    ?: System.getenv("DJI_API_KEY")?.takeIf { it.isNotBlank() }
+    ?: ""
+
 android {
     namespace = "com.bebopia.app"
     compileSdk = 35
@@ -12,8 +18,29 @@ android {
         applicationId = "com.bebopia.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "0.9"
+        versionCode = 11
+        versionName = "1.0"
+        manifestPlaceholders["DJI_API_KEY"] = djiApiKey
+        // Le kit DJI n'existe que pour les processeurs ARM (tous les téléphones récents).
+        ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
+    }
+
+    useLibrary("org.apache.http.legacy")
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+            keepDebugSymbols += listOf(
+                "*/*/libdjivideo.so", "*/*/libSDKRelativeJNI.so", "*/*/libFlyForbid.so", "*/*/libduml_vision_bokeh.so",
+                "*/*/libyuv2.so", "*/*/libGroudStation.so", "*/*/libFRCorkscrew.so", "*/*/libUpgradeVerify.so",
+                "*/*/libFR.so", "*/*/libDJIFlySafeCore.so", "*/*/libdjifs_jni.so", "*/*/libsfjni.so",
+                "*/*/libDJICommonJNI.so", "*/*/libDJICSDKCommon.so", "*/*/libDJIUpgradeCore.so",
+                "*/*/libDJIUpgradeJNI.so", "*/*/libDJIWaypointV2Core.so", "*/*/libDJIMOP.so", "*/*/libDJISDKLOGJNI.so",
+            )
+        }
+        resources {
+            excludes += listOf("META-INF/rxjava.properties", "assets/location_map_gps_locked.png", "assets/location_map_gps_3d.png")
+        }
     }
 
     buildTypes {
@@ -45,6 +72,13 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
+
+    // Kit DJI (Mavic Mini, Mini 2, Mini SE…) : connexion par la radiocommande en USB
+    implementation("com.dji:dji-sdk:4.18") {
+        exclude(module = "library-anti-distortion") // seulement pour les Mavic 2
+        exclude(module = "fly-safe-database")       // téléchargée par DJI à l'enregistrement
+    }
+    compileOnly("com.dji:dji-sdk-provided:4.18")
 
     // WebSocket pour la conversation en direct avec Gemini Live
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

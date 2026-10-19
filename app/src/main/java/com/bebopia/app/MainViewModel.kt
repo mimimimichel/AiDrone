@@ -12,6 +12,9 @@ import com.bebopia.app.android.BebopVideo
 import com.bebopia.app.android.GeminiLive
 import com.bebopia.app.android.GeminiVision
 import com.bebopia.app.core.ai.ObjectFinder
+import com.bebopia.app.dji.DjiDrone
+import com.bebopia.app.dji.DjiLink
+import android.graphics.SurfaceTexture
 import com.bebopia.app.core.ai.AreaSearch
 import com.bebopia.app.android.LiveState
 import com.bebopia.app.android.VoiceState
@@ -47,7 +50,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.concurrent.thread
 
-enum class Mode { NONE, CONNECTING, BEBOP, SIM }
+enum class Mode { NONE, CONNECTING, BEBOP, MAVIC, SIM }
 
 data class UiState(
     val mode: Mode = Mode.NONE,
@@ -223,8 +226,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             distance = d?.distanceFromHome() ?: 0.0,
             flying = d?.flying ?: false,
             droneState = bebop?.flyingStateLabel ?: if (d != null) (if (d.flying) "en vol" else "au sol") else "",
-            linkUp = bebop?.linkUp ?: true,
-            hasVideo = video?.hasRecentFrame ?: (mode == Mode.SIM),
+            linkUp = bebop?.linkUp ?: if (mode == Mode.MAVIC) dji.isConnected() else true,
+            hasVideo = video?.hasRecentFrame ?: if (mode == Mode.MAVIC) dji.hasRecentFrame() else (mode == Mode.SIM),
             listening = listening,
             voice = voiceLabel,
             network = router.describe,
@@ -252,14 +255,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun attachFinder(d: DroneBase, a: Agent, eyes: Eyes, simulation: Boolean) {
         a.finder = ObjectFinder(
             d, eyes, vision,
-            hfovDeg = if (simulation) 65.0 else 75.0,
+            hfovDeg = if (simulation) 65.0 else if (d is DjiDrone) 72.0 else 75.0,
             simulation = simulation,
             shouldStop = { a.paused },
             report = { a.addChat(Role.SYSTEM, it) },
         )
         a.areaSearch = AreaSearch(
             d, eyes, vision,
-            hfovDeg = if (simulation) 65.0 else 75.0,
+            hfovDeg = if (simulation) 65.0 else if (d is DjiDrone) 72.0 else 75.0,
             simulation = simulation,
             shouldStop = { a.paused },
             report = { a.addChat(Role.SYSTEM, it) },
@@ -296,6 +299,60 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---- connexion ------------------------------------------------------------------------
+    // ---- Mavic Mini (kit DJI) ----------------------------------------------------------------
+    private val dji = DjiLink()
+    @Volatile private var surfaceTexture: Triple<SurfaceTexture, Int, Int>? = null
+
+    fun connectMavic() {
+        if (mode != Mode.NONE) return
+        if (!DjiLink.available()) {
+            sysMessage("Le kit DJI n'a pas pu se charger sur ce téléphone : le Mavic n'est pas utilisable.")
+            return
+        }
+        mode = Mode.CONNECTING
+        sysMessage("Connexion au Mavic : branche la radiocommande au téléphone (câble USB), allume-la, puis allume le drone. " +
+            "Si Android propose d'ouvrir une application, choisis Bebop IA. Ferme DJI Fly.")
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                dji.register(getApplication(), object : DjiLink.Listener {
+                    override fun onStatus(message: String) = sysMessage(message)
+                    override fun onProductChanged(connected: Boolean) {
+                        if (!connected && mode == Mode.MAVIC) agent?.linkLost()
+                        if (connected && mode == Mode.MAVIC) sysMessage("Liaison avec le drone rétablie.")
+                    }
+                })
+                val end = System.currentTimeMillis() + 120_000
+                while (!dji.isConnected() && System.currentTimeMillis() < end && mode == Mode.CONNECTING) delay(500)
+                if (mode != Mode.CONNECTING) return@launch
+                if (!dji.isConnected()) throw IllegalStateException("drone DJI introuvable au bout de 2 minutes")
+                val d = DjiDrone(limits, dji, ::log)
+                d.connect()
+                val eyes = TextureEyes({ textureView }, { dji.hasRecentFrame() })
+                val a = makeAgent(d, eyes)
+                startGuard(d, a, TextureGray({ textureView }, { dji.hasRecentFrame() }))
+                attachFinder(d, a, eyes, simulation = false)
+                drone = d
+                agent = a
+                mode = Mode.MAVIC
+                surfaceTexture?.let { (st, w, h) -> dji.startVideo(getApplication(), st, w, h) }
+                a.start()
+                a.addChat(Role.SYSTEM, "Connecté : ${d.name} (batterie ${d.battery() ?: "?"} %). L'IA est en pause : parle-lui, ou appuie sur « ▶ IA ». " +
+                    "En intérieur, il faut un sol texturé et éclairé pour que le drone tienne sa position.")
+            } catch (e: Exception) {
+                if (mode == Mode.CONNECTING) mode = Mode.NONE
+                sysMessage("Connexion au Mavic impossible : ${e.message ?: e.javaClass.simpleName}")
+            }
+            refresh()
+        }
+    }
+
+    /** Surface de la vidéo (le kit DJI y décode directement le flux). */
+    fun onSurfaceTexture(st: SurfaceTexture?, w: Int, h: Int) {
+        surfaceTexture = st?.let { Triple(it, w, h) }
+        if (st == null) dji.stopVideo()
+        else if (mode == Mode.MAVIC) dji.startVideo(getApplication(), st, w, h)
+    }
+
     fun connectBebop() {
         if (mode != Mode.NONE) return
         mode = Mode.CONNECTING
@@ -365,6 +422,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val a = agent
         val d = drone
         val v = video
+        val wasMavic = mode == Mode.MAVIC
+        if (wasMavic || mode == Mode.CONNECTING) dji.stopVideo()
         agent = null
         drone = null
         video = null
@@ -510,7 +569,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             live = null
             return
         }
-        val where = if (mode == Mode.SIM) "Simulation : tu vois par la caméra du téléphone, rien ne vole." else "Tu es connecté au vrai Bebop."
+        val where = if (mode == Mode.SIM) "Simulation : tu vois par la caméra du téléphone, rien ne vole." else "Tu es connecté au vrai drone (${drone?.name ?: "drone"})."
         val how = if (a.paused) "Tu es en pause : tu peux parler mais pas bouger." else "Tu peux piloter."
         val check = (if (a.confirm) " Chaque déplacement doit être validé par le pilote." else "") +
             " Distance max par action : %.1f m.".format(limits.maxStepM)

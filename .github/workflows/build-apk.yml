@@ -24,6 +24,8 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --stacktrace --no-daemon
+        env:
+          DJI_API_KEY: ${{ secrets.DJI_API_KEY }}
 
       - name: Publier l'APK
         uses: actions/upload-artifact@v4

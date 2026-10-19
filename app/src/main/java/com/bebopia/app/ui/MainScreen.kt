@@ -101,6 +101,9 @@ fun MainScreen(vm: MainViewModel) {
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         if (ok) vm.micPressed() else vm.sysMessage("Autorise le micro pour parler au drone.")
     }
+    val locPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { _ ->
+        vm.connectMavic()
+    }
     val camPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         if (ok) vm.startSimulation() else vm.sysMessage("Autorise la caméra pour la simulation.")
     }
@@ -130,13 +133,14 @@ fun MainScreen(vm: MainViewModel) {
             Spacer(Modifier.width(10.dp))
             val (label, color) = when (s.mode) {
                 Mode.BEBOP -> (if (s.linkUp) "Bebop connecté" else "Liaison perdue") to (if (s.linkUp) Ok else Danger)
+                Mode.MAVIC -> (if (s.linkUp) "Mavic connecté" else "Liaison perdue") to (if (s.linkUp) Ok else Danger)
                 Mode.SIM -> "Simulation" to Accent
                 Mode.CONNECTING -> "Connexion…" to Muted
                 Mode.NONE -> "Déconnecté" to Muted
             }
             Text(label, color = color, fontSize = 13.sp)
             Spacer(Modifier.weight(1f))
-            if (s.mode == Mode.BEBOP || s.mode == Mode.SIM) {
+            if (s.mode == Mode.BEBOP || s.mode == Mode.MAVIC || s.mode == Mode.SIM) {
                 TextButton(onClick = { vm.disconnect() }) { Text("Déconnecter", fontSize = 13.sp) }
             }
             TextButton(onClick = { showSettings = true }) { Text("⚙", fontSize = 22.sp, color = Color.White) }
@@ -151,18 +155,23 @@ fun MainScreen(vm: MainViewModel) {
                 .background(Color.Black),
         ) {
             when (s.mode) {
-                Mode.BEBOP -> BebopVideoView(vm)
+                Mode.BEBOP, Mode.MAVIC -> BebopVideoView(vm)
                 Mode.SIM -> CameraPreview(vm)
                 else -> ConnectPanel(
                     connecting = s.mode == Mode.CONNECTING,
                     onConnect = { vm.connectBebop() },
+                    onMavic = {
+                        // Le kit DJI a besoin de la localisation pour s'enregistrer.
+                        if (granted(Manifest.permission.ACCESS_FINE_LOCATION)) vm.connectMavic()
+                        else locPermission.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                    },
                     onSimulate = {
                         if (granted(Manifest.permission.CAMERA)) vm.startSimulation()
                         else camPermission.launch(Manifest.permission.CAMERA)
                     },
                 )
             }
-            if (s.mode == Mode.BEBOP || s.mode == Mode.SIM) {
+            if (s.mode == Mode.BEBOP || s.mode == Mode.MAVIC || s.mode == Mode.SIM) {
                 Text(
                     statusLabel(s),
                     color = Color.White,
@@ -197,7 +206,7 @@ fun MainScreen(vm: MainViewModel) {
                             .padding(horizontal = 6.dp, vertical = 2.dp),
                     )
                 }
-                if (s.mode == Mode.BEBOP && !s.hasVideo) {
+                if ((s.mode == Mode.BEBOP || s.mode == Mode.MAVIC) && !s.hasVideo) {
                     Text("En attente de la vidéo…", color = Muted, modifier = Modifier.align(Alignment.Center))
                 }
             }
@@ -322,7 +331,7 @@ private fun statusLabel(s: UiState): String {
 }
 
 private fun telemetry(s: UiState): String {
-    if (s.mode != Mode.BEBOP && s.mode != Mode.SIM) return "Réseau : ${s.network}"
+    if (s.mode != Mode.BEBOP && s.mode != Mode.MAVIC && s.mode != Mode.SIM) return "Réseau : ${s.network}"
     // La batterie est passée en paramètre, jamais collée dans le modèle : son « % » ferait planter format().
     val bat = s.battery?.let { "$it %" } ?: "?"
     return "🔋 %s   ⬆ %.1f m   ↔ %.1f m   • %s   • étape %d/%d   • %s".format(
@@ -414,7 +423,7 @@ private fun ChatBubble(line: ChatLine) {
 }
 
 @Composable
-private fun ConnectPanel(connecting: Boolean, onConnect: () -> Unit, onSimulate: () -> Unit) {
+private fun ConnectPanel(connecting: Boolean, onConnect: () -> Unit, onMavic: () -> Unit, onSimulate: () -> Unit) {
     Column(
         Modifier.fillMaxSize().padding(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -423,18 +432,20 @@ private fun ConnectPanel(connecting: Boolean, onConnect: () -> Unit, onSimulate:
         if (connecting) {
             CircularProgressIndicator(color = Accent)
             Spacer(Modifier.height(8.dp))
-            Text("Connexion au Bebop…", color = Color.White)
+            Text("Connexion au drone…", color = Color.White)
         } else {
             Text("Drone non connecté", color = Color.White, fontWeight = FontWeight.Bold)
             Text(
-                "Wi-Fi du téléphone sur le Bebop, Skycontroller éteinte, données mobiles activées.",
+                "Bebop : Wi-Fi du téléphone sur le drone, Skycontroller éteinte. " +
+                    "Mavic Mini : radiocommande branchée au téléphone en USB, DJI Fly fermée.",
                 color = Muted,
                 fontSize = 12.sp,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(vertical = 6.dp),
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onConnect) { Text("Connecter le Bebop") }
+                Button(onClick = onConnect) { Text("Bebop") }
+                Button(onClick = onMavic) { Text("Mavic Mini") }
                 OutlinedButton(onClick = onSimulate) { Text("Simulation") }
             }
         }
@@ -449,11 +460,17 @@ private fun BebopVideoView(vm: MainViewModel) {
                 surfaceTextureListener = object : TextureView.SurfaceTextureListener {
                     private var surface: Surface? = null
                     override fun onSurfaceTextureAvailable(st: SurfaceTexture, width: Int, height: Int) {
-                        surface = Surface(st).also { vm.onSurface(it) }
+                        if (vm.state.value.mode == Mode.MAVIC) {
+                            // Le kit DJI décode directement dans la texture.
+                            vm.onSurfaceTexture(st, width, height)
+                        } else {
+                            surface = Surface(st).also { vm.onSurface(it) }
+                        }
                     }
                     override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, width: Int, height: Int) {}
                     override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
                         vm.onSurface(null)
+                        vm.onSurfaceTexture(null, 0, 0)
                         surface?.release()
                         surface = null
                         return true
