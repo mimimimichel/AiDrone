@@ -59,6 +59,7 @@ public class DjiLink {
     private volatile boolean vps = false;
     private volatile boolean motorsOn = false;
     private volatile boolean lowBattery = false;
+    private volatile double heading = 0;
     private volatile long lastFrameAt = 0L;
     private volatile DJICodecManager codec;
     private volatile VideoFeeder.VideoFeed listenedFeed;
@@ -84,6 +85,17 @@ public class DjiLink {
     public boolean flying() { return flying; }
     public boolean landingConfirmationNeeded() { return landingConfirmationNeeded; }
     public String flightMode() { return flightMode; }
+    /** Cap du drone (boussole), en degrés de -180 à 180. */
+    public double heading() { return heading; }
+
+    /** Nacelle vers un angle, sans attendre la réponse (pour suivre la tête en continu). */
+    public void gimbalPitchFast(float degrees) {
+        Aircraft a = aircraft();
+        Gimbal g = a == null ? null : a.getGimbal();
+        if (g == null) return;
+        g.rotate(new Rotation.Builder().mode(RotationMode.ABSOLUTE_ANGLE).pitch(degrees).time(0.2).build(), null);
+    }
+
     public boolean hasRecentFrame() { return System.currentTimeMillis() - lastFrameAt < 1500; }
 
     /** État du drone en clair, pour comprendre un refus (décollage…). */
@@ -235,6 +247,7 @@ public class DjiLink {
                     vps = s.isVisionPositioningSensorBeingUsed();
                     motorsOn = s.areMotorsOn();
                     lowBattery = s.isLowerThanBatteryWarningThreshold();
+                    if (s.getAttitude() != null) heading = s.getAttitude().yaw;
                 }
             });
         }

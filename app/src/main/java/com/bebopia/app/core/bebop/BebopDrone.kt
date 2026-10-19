@@ -110,6 +110,16 @@ class BebopDrone(
         }
     }
 
+    @Volatile private var headSentAt = 0L
+
+    /** Caméra du Bebop : inclinaison et pivot numériques, qui suivent la tête. */
+    override fun headLook(pitch: Double, yaw: Double, follow: Boolean, recenter: Boolean) {
+        val now = System.currentTimeMillis()
+        if (now - headSentAt < 100) return
+        headSentAt = now
+        net.send(BebopCmd.cameraOrientation(pitch.coerceIn(-80.0, 15.0).toFloat(), yaw.coerceIn(-35.0, 35.0).toFloat()))
+    }
+
     override fun doTilt(degrees: Int) {
         repeat(3) {
             net.send(BebopCmd.cameraOrientation(degrees.toFloat(), 0f))

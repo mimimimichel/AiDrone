@@ -35,6 +35,62 @@ class DjiDrone(
         set(_) {} // l'état vient du drone
 
     @Volatile private var cancel = false
+    @Volatile private var moving = false
+
+    // ---- suivi de la tête (casque) ----------------------------------------------------------
+    @Volatile private var headSeenAt = 0L
+    @Volatile private var headFollow = false
+    @Volatile private var headYaw = 0.0
+    @Volatile private var headYawCenter = 0.0
+    @Volatile private var droneYawCenter: Double? = null
+    private var pitchSent = 999f
+    private var pitchSentAt = 0L
+    private var yawLoop: Thread? = null
+
+    override fun headLook(pitch: Double, yaw: Double, follow: Boolean, recenter: Boolean) {
+        val now = System.currentTimeMillis()
+        headSeenAt = now
+        // Nacelle du Mini : de 0° (devant) à -90° (vers le sol)
+        val p = pitch.coerceIn(-90.0, 0.0).toFloat()
+        if (abs(p - pitchSent) >= 1.5f && now - pitchSentAt >= 120) {
+            link.gimbalPitchFast(p)
+            pitchSent = p
+            pitchSentAt = now
+        }
+        if (recenter || droneYawCenter == null || (follow && !headFollow)) {
+            droneYawCenter = link.heading()
+            headYawCenter = yaw
+        }
+        headYaw = yaw
+        headFollow = follow
+        if (follow && yawLoop == null) {
+            yawLoop = Thread({ followLoop() }, "suivi-tete").apply { isDaemon = true; start() }
+        }
+    }
+
+    private fun angleDiff(a: Double): Double = ((a + 540.0) % 360.0) - 180.0
+
+    /** Fait tourner le drone vers la direction de la tête, 10 fois par seconde. */
+    private fun followLoop() {
+        var sending = false
+        while (true) {
+            Thread.sleep(100)
+            val active = headFollow && System.currentTimeMillis() - headSeenAt < 1000 && !moving && link.flying()
+            val center = droneYawCenter
+            if (!active || center == null) {
+                if (sending) {
+                    link.sendSticks(0f, 0f, 0f, 0f)
+                    sending = false
+                }
+                continue
+            }
+            val target = center + (headYaw - headYawCenter)
+            val err = angleDiff(target - link.heading())
+            val rate = if (abs(err) < 3) 0.0 else (err * 1.5).coerceIn(-60.0, 60.0)
+            link.sendSticks(0f, 0f, rate.toFloat(), 0f)
+            sending = true
+        }
+    }
 
     /** Attend le résultat d'une commande DJI (null = réussite). */
     private fun call(timeoutS: Long = 10, cmd: (DjiLink.Done) -> Unit): String? {
@@ -115,6 +171,18 @@ class DjiDrone(
     }
 
     override fun doMove(forward: Double, right: Double, down: Double, yawRad: Double, waitS: Double) {
+        moving = true
+        try {
+            moveNow(forward, right, down, yawRad)
+        } finally {
+            moving = false
+            // Après une rotation par l'IA, la direction actuelle redevient « devant » pour la tête.
+            droneYawCenter = link.heading()
+            headYawCenter = headYaw
+        }
+    }
+
+    private fun moveNow(forward: Double, right: Double, down: Double, yawRad: Double) {
         cancel = false
         val yawDeg = Math.toDegrees(yawRad)
         val dist = hypot(forward, right)

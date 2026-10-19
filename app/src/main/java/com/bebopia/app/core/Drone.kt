@@ -61,6 +61,13 @@ abstract class DroneBase(val limits: Limits) {
 
     /** Renvoie le plafond et la distance max au drone après un changement de réglage. */
     open fun applyLimits() {}
+
+    /**
+     * Orientation de la tête du pilote (casque), environ 10 fois par seconde.
+     * pitch : vers le haut > 0 ; yaw : vers la droite > 0 (degrés, par rapport au recentrage).
+     * follow : le drone tourne pour suivre la tête ; recenter : la direction actuelle devient « devant ».
+     */
+    open fun headLook(pitch: Double, yaw: Double, follow: Boolean, recenter: Boolean) {}
     protected open fun pause(seconds: Double) = Thread.sleep((seconds * 1000).toLong())
 
     fun takeoff(): String {

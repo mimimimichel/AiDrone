@@ -662,7 +662,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         if (headset != null) return
-        val h = HeadsetStream(grab = ::grabForHeadset, state = ::headsetState)
+        val h = HeadsetStream(
+            grab = ::grabForHeadset,
+            state = ::headsetState,
+            onHead = { p, y, follow, recenter -> drone?.headLook(p, y, follow, recenter) },
+            tls = headsetTls(),
+        )
         if (!h.start()) {
             sysMessage("Impossible de lancer la vue dans le casque (port 8080 occupé ?).")
             return
@@ -671,10 +676,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val urls = h.urls()
         sysMessage(
             if (urls.isEmpty()) "Vue dans le casque prête, mais le téléphone n'est sur aucun Wi-Fi : connecte-le au même Wi-Fi que le casque, ou active son partage de connexion."
-            else "Dans le navigateur du Quest (même Wi-Fi que le téléphone), ouvre : ${urls.joinToString("  ou  ")}",
+            else "Dans le navigateur du Quest (même Wi-Fi que le téléphone), ouvre : ${urls.first()} " +
+                "(accepte l'avertissement de sécurité : Avancé → Continuer), puis « 🥽 Entrer en VR » : la caméra suit ta tête. " +
+                "Dehors, sans box : active le point d'accès mobile du téléphone et connecte le Quest dessus.",
         )
         refresh()
     }
+
+    /** Certificat de l'adresse https du casque (fourni dans l'application, auto-signé). */
+    private fun headsetTls(): javax.net.ssl.SSLServerSocketFactory? = runCatching {
+        val ks = java.security.KeyStore.getInstance("PKCS12")
+        getApplication<Application>().assets.open("headset.p12").use { ks.load(it, "bebopia".toCharArray()) }
+        val kmf = javax.net.ssl.KeyManagerFactory.getInstance(javax.net.ssl.KeyManagerFactory.getDefaultAlgorithm())
+        kmf.init(ks, "bebopia".toCharArray())
+        val ctx = javax.net.ssl.SSLContext.getInstance("TLS")
+        ctx.init(kmf.keyManagers, null, null)
+        ctx.serverSocketFactory
+    }.onFailure { Log.e("BebopIA", "certificat du casque", it) }.getOrNull()
 
     /** Image pour le casque (appelée sur le thread de l'interface). */
     private fun grabForHeadset(): android.graphics.Bitmap? = when (mode) {
