@@ -76,7 +76,7 @@ class AreaSearch(
             approved = true,
         )
         onPlan(plan)
-        report("🛰 Mission : chercher « $target » dans un rayon de %.0f m, à %.0f m d'altitude".format(radius, alt))
+        report("🛰 Mission : chercher « %s » dans un rayon de %.0f m, à %.0f m d'altitude".format(target, radius, alt))
 
         return try {
             // 1. décoller et monter
@@ -108,7 +108,7 @@ class AreaSearch(
             setStep(4, StepState.DOING)
             goHome()
             setStep(4, StepState.DONE)
-            finish(false, "pas trouvé « $target » dans un rayon de %.0f m ; je suis revenu au départ".format(radius))
+            finish(false, "pas trouvé « %s » dans un rayon de %.0f m ; je suis revenu au départ".format(target, radius))
         } catch (e: Abort) {
             val i = plan.steps.indexOfFirst { it.state == StepState.DOING }
             if (i >= 0) setStep(i, StepState.FAILED, e.message ?: "")

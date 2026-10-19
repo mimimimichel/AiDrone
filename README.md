@@ -78,9 +78,17 @@ Dans ⚙, active **Vue dans le casque**. L'app affiche une adresse du type `http
 - **gâchette avant** : recentrer (la direction actuelle devient « devant »).
 La rotation par la tête s'arrête dès que l'IA déplace le drone, ou si le casque ne répond plus pendant une seconde.
 
-**Cockpit** : la page du casque est un cockpit d'avion. Au centre, la vidéo avec un affichage tête haute : horizon artificiel et indicateur de roulis, cap (boussole) avec le point de départ (H), échelles de vitesse et d'altitude (plafond en rouge), vitesse verticale, angle de la nacelle, alerte d'obstacle, proposition de l'IA à valider et sous-titres. À gauche : batterie, temps de vol, retour au départ (flèche et distance), GPS, mode de vol, capteurs. À droite : état de l'IA, plan en cours étape par étape, conversation. En haut : heure et alertes ; en bas : commandes du casque.
+**En VR**, la caméra occupe presque tout le champ de vision, avec des infos discrètes dans les coins (batterie, temps de vol, cap, horizon, vitesse, altitude, retour au départ, nacelle, état de l'IA, étape du plan, sous-titres) ; joystick haut/bas pour agrandir ou réduire l'image. **Sur écran plat**, la page est un cockpit d'avion. Au centre, la vidéo avec un affichage tête haute : horizon artificiel et indicateur de roulis, cap (boussole) avec le point de départ (H), échelles de vitesse et d'altitude (plafond en rouge), vitesse verticale, angle de la nacelle, alerte d'obstacle, proposition de l'IA à valider et sous-titres. À gauche : batterie, temps de vol, retour au départ (flèche et distance), GPS, mode de vol, capteurs. À droite : état de l'IA, plan en cours étape par étape, conversation. En haut : heure et alertes ; en bas : commandes du casque.
 
 **Parler à l'IA depuis le casque** : sur la page `https`, touche **🎙 Parler à l'IA ici** (autorise le micro la première fois), ou entre en VR : l'audio démarre aussi. Le micro du Quest remplace celui du téléphone et la voix de l'IA sort dans le casque (le téléphone se tait). La conversation s'ouvre toute seule si elle ne l'était pas. Tu peux toujours couper la parole à l'IA, et « stop » / « atterris » restent instantanés.
+
+## Reprendre la main (Mavic)
+
+Bouge un manche de la radiocommande : tu reprends immédiatement les commandes (l'IA se met en pause, son déplacement s'arrête, la rotation par la tête se coupe ; « MANUEL » s'affiche). Pour lui rendre la main : touche ▶ IA ou dis « à toi » / « reprends les commandes ».
+
+## Obstacles en temps réel
+
+Avant chaque avancée commandée par l'IA (même en mode confiance), l'image est analysée par le modèle de vision : s'il y a un obstacle dans l'axe, le pas est raccourci pour garder 60 cm de marge, ou refusé, et l'IA doit contourner. Pendant le déplacement, le détecteur d'obstacles continue de surveiller la vidéo.
 
 ## Mode confiance
 

@@ -53,6 +53,81 @@ class GeminiVision(
 
     private class ModelUnavailable(msg: String) : IOException(msg)
 
+    private val PATH_SCHEMA = JSONObject("""
+        {"type":"object","properties":{
+          "clear":{"type":"boolean","description":"true si rien ne gêne la trajectoire droit devant sur la distance demandée plus 1 m"},
+          "nearest_m":{"type":"number","description":"distance estimée (m) du premier obstacle dans l'axe du drone ; 99 s'il n'y en a pas"},
+          "description":{"type":"string","description":"une phrase : ce qu'il y a devant, dans l'axe"}
+        },"required":["clear","nearest_m","description"]}
+        """.trimIndent())
+
+    /** Y a-t-il un obstacle dans l'axe du drone sur les [forwardM] prochains mètres ? */
+    fun checkPath(jpegBase64: String, forwardM: Double): com.bebopia.app.core.ai.PathResult {
+        val key = apiKey()
+        if (key.isBlank()) return com.bebopia.app.core.ai.PathResult(true, null, "")
+        val prompt = "Image de la caméra frontale d'un drone de 30 cm de large, qui va avancer tout droit de " +
+            "%.1f m (vers le centre de l'image). Regarde la zone centrale de l'image, dans l'axe de déplacement : ".format(forwardM) +
+            "mur, meuble, porte, personne, plante, câble, vitre, objet suspendu… Estime la distance du premier obstacle " +
+            "dans l'axe, en t'aidant de la taille des objets connus. En cas de doute sur une distance, sous-estime-la. " +
+            "Le sol sous le drone n'est pas un obstacle."
+        var last: Exception? = null
+        for (attempt in MODELS.indices) {
+            val model = MODELS[(modelIndex + attempt) % MODELS.size]
+            try {
+                val j = generate(model, key, jpegBase64, prompt, PATH_SCHEMA)
+                return com.bebopia.app.core.ai.PathResult(
+                    clear = j.optBoolean("clear", false),
+                    nearestM = j.optDouble("nearest_m", Double.NaN).takeIf { !it.isNaN() && it < 90 },
+                    description = j.optString("description"),
+                )
+            } catch (e: ModelUnavailable) {
+                last = e
+            }
+        }
+        throw IOException("vérification de trajectoire impossible (${last?.message})")
+    }
+
+    /** Appel générique : image + consigne, réponse JSON selon [schema]. */
+    private fun generate(model: String, key: String, jpeg: String, prompt: String, schema: JSONObject): JSONObject {
+        val gen = JSONObject().put("responseMimeType", "application/json").put("responseJsonSchema", schema).put("temperature", 0.1)
+        if (model.startsWith("gemini-3")) gen.put("thinkingConfig", JSONObject().put("thinkingLevel", "LOW"))
+        val body = JSONObject()
+            .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray()
+                .put(JSONObject().put("inlineData", JSONObject().put("mimeType", "image/jpeg").put("data", jpeg)))
+                .put(JSONObject().put("text", prompt)))))
+            .put("generationConfig", gen)
+        val conn = open(URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$key"))
+        try {
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 10_000
+            conn.readTimeout = 15_000
+            conn.doOutput = true
+            conn.setRequestProperty("content-type", "application/json")
+            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val code = conn.responseCode
+            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
+                ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+            if (code !in 200..299) {
+                val msg = runCatching { JSONObject(text).optJSONObject("error")?.optString("message") }.getOrNull() ?: text.take(200)
+                if (code == 404 || code == 429 || code >= 500 || code == 400 && msg.contains("model", ignoreCase = true)) throw ModelUnavailable("$code $msg")
+                throw IOException("Gemini, erreur $code : $msg")
+            }
+            val parts = JSONObject(text).optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
+            val answer = buildString {
+                if (parts != null) for (i in 0 until parts.length()) {
+                    val p = parts.optJSONObject(i) ?: continue
+                    if (!p.optBoolean("thought")) append(p.optString("text"))
+                }
+            }
+            val a = answer.indexOf('{')
+            val b = answer.lastIndexOf('}')
+            if (a < 0 || b <= a) throw IOException("réponse illisible")
+            return JSONObject(answer.substring(a, b + 1))
+        } finally {
+            conn.disconnect()
+        }
+    }
+
     private fun call(model: String, key: String, jpeg: String, target: String): Detection {
         val prompt = "Image de la caméra frontale d'un drone, en intérieur ou en extérieur. Objet cherché : « $target ».\n" +
             "Regarde attentivement toute l'image, y compris les bords et les petits objets. " +

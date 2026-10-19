@@ -288,6 +288,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** [hfov] : champ de vision horizontal de la caméra (Bebop 75°, Mavic Mini 72°, téléphone 65°). */
     private fun attachFinder(d: DroneBase, a: Agent, eyes: Eyes, simulation: Boolean, hfov: Double = if (simulation) 65.0 else 75.0) {
+        // Avant chaque avancée commandée par l'IA : obstacle dans l'axe ? (modèle de vision)
+        a.pathChecker = com.bebopia.app.core.ai.PathChecker { jpeg, fwd -> vision.checkPath(jpeg, fwd) }
         a.finder = ObjectFinder(
             d, eyes, vision,
             hfovDeg = hfov,
@@ -325,6 +327,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         a.onEvent = { text, reply -> live?.takeIf { it.active }?.event(text, reply) }
         a.onTrust = { on -> setTrust(on) }
+        a.onHandBack = { handBack() }
         agentEyes = eyes
         synchronized(localChat) {
             localChat.forEach { a.addChat(it.role, it.text) }
@@ -358,6 +361,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         if (!connected && mode == Mode.MAVIC) agent?.linkLost()
                         if (connected && mode == Mode.MAVIC) sysMessage("Liaison avec le drone rétablie.")
                     }
+                    override fun onPilotSticks() = pilotTakeover()
                 })
                 val end = System.currentTimeMillis() + 120_000
                 while (!dji.isConnected() && System.currentTimeMillis() < end && mode == Mode.CONNECTING) delay(500)
@@ -519,6 +523,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun toggleAi() = withAgent {
+        if (it.paused && drone?.manualControl == true) {
+            handBack()
+            return@withAgent
+        }
         if (it.paused && useLive && live == null) {
             sysMessage("L'IA pilote pendant la conversation : appuie aussi sur 🎤 pour lui parler.")
         }
@@ -796,12 +804,39 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .put("ttc", clean(s.guardTtc))
             .put("obstacle", s.obstacle)
             .put("confirm", s.confirm)
+            .put("manual", d?.manualControl == true)
             .put("say", s.chat.lastOrNull { it.role == Role.DRONE }?.text ?: "")
             .put("tel", tel)
             .put("plan", plan ?: org.json.JSONObject.NULL)
             .put("chat", chat)
             .put("top", listOf(s.mode.name, s.battery?.let { "$it %" } ?: "").joinToString(" "))
             .toString()
+    }
+
+    // ---- reprise en main avec la radiocommande -----------------------------------------------
+    @Volatile private var takeoverAt = 0L
+
+    /** Le pilote bouge un manche : il reprend la main immédiatement. */
+    private fun pilotTakeover() {
+        val d = drone ?: return
+        if (d.manualControl || System.currentTimeMillis() - takeoverAt < 1500) return
+        takeoverAt = System.currentTimeMillis()
+        thread(isDaemon = true) {
+            runCatching { d.setManual(true) }
+            agent?.pilotTakeover()
+            refresh()
+        }
+    }
+
+    /** Le pilote rend les commandes à l'IA. */
+    private fun handBack() {
+        val d = drone ?: return
+        thread(isDaemon = true) {
+            if (d.manualControl) runCatching { d.setManual(false) }
+            agent?.let { if (it.paused) it.togglePause() }
+            sysMessage("🤖 L'IA a de nouveau les commandes.")
+            refresh()
+        }
     }
 
     /** Mode confiance : l'IA agit sans demander l'accord du pilote (garde-fous inchangés). */

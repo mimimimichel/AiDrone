@@ -38,6 +38,8 @@ public class DjiLink {
     public interface Listener {
         void onStatus(String message);
         void onProductChanged(boolean connected);
+        /** Le pilote bouge un manche de la radiocommande. */
+        default void onPilotSticks() {}
     }
 
     /** Résultat d'une commande : null si tout va bien, sinon le message d'erreur. */
@@ -292,6 +294,21 @@ public class DjiLink {
                     homeSet = s.isHomeLocationSet();
                     if (s.getAircraftLocation() != null) { lat = s.getAircraftLocation().getLatitude(); lon = s.getAircraftLocation().getLongitude(); }
                     if (s.getHomeLocation() != null) { homeLat = s.getHomeLocation().getLatitude(); homeLon = s.getHomeLocation().getLongitude(); }
+                }
+            });
+        }
+        if (a.getRemoteController() != null) {
+            a.getRemoteController().setHardwareStateCallback(new dji.common.remotecontroller.HardwareState.HardwareStateCallback() {
+                @Override
+                public void onUpdate(dji.common.remotecontroller.HardwareState hs) {
+                    int m = 0;
+                    if (hs.getLeftStick() != null) m = Math.max(m, Math.max(Math.abs(hs.getLeftStick().getHorizontalPosition()), Math.abs(hs.getLeftStick().getVerticalPosition())));
+                    if (hs.getRightStick() != null) m = Math.max(m, Math.max(Math.abs(hs.getRightStick().getHorizontalPosition()), Math.abs(hs.getRightStick().getVerticalPosition())));
+                    // Manches de -660 à 660 : au-delà de ~20 %, c'est un geste volontaire du pilote.
+                    if (m > 130) {
+                        Listener li = listener;
+                        if (li != null) li.onPilotSticks();
+                    }
                 }
             });
         }

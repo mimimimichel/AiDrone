@@ -390,6 +390,7 @@ function draw(){
   if(tel.imuPreheating)warns.push([WARN,'PRÉCHAUFFAGE']);
   if(s.paused)warns.push([WARN,'IA EN PAUSE']);
   if(s.confirm===false)warns.push([WARN,'MODE CONFIANCE']);
+  if(s.manual)warns.push([CYAN,'MANUEL']);
   let wx=W-28;
   for(const [c,w] of warns.slice(0,4).reverse()){g.font='bold 22px sans-serif';const ww=g.measureText(w).width+28;wx-=ww;
     g.fillStyle=c;rr(wx,40,ww,44,8);g.fill();t(w,wx+ww/2,70,22,'#000','center',true);wx-=10;}
@@ -544,6 +545,63 @@ function drawRight(s){
     y=wrap(who[0]+l.t,x+18,y,w-36,23,3,18,who[1])+4;}
 }
 
+// ======================= VR : la caméra en grand, infos discrètes dans les coins (style lunettes FPV) =======================
+const V=document.createElement('canvas');V.width=1920;V.height=1080;
+function drawOSD(){
+  const o=V.getContext('2d'), s=state, tel=s.tel||{}, w=1920, h=1080, cx=w/2, cy=h/2;
+  o.fillStyle='#000';o.fillRect(0,0,w,h);
+  if(frame)o.drawImage(frame,0,0,w,h);else{o.fillStyle=GREY;o.font='bold 48px sans-serif';o.textAlign='center';o.fillText('PAS DE VIDÉO',cx,cy);}
+  function tx(str,x,y,size,color,align,bold){o.font=(bold?'bold ':'')+size+'px sans-serif';o.textAlign=align||'left';o.lineWidth=6;o.strokeStyle='rgba(0,0,0,.85)';o.strokeText(str,x,y);o.fillStyle=color||'#fff';o.fillText(str,x,y);}
+  // Haut gauche : batterie, temps de vol
+  const b=num(s.battery,null), bc=b===null?GREY:b<30?RED:b<50?WARN:HUD;
+  o.strokeStyle=bc;o.lineWidth=4;o.strokeRect(60,60,120,44);o.fillStyle=bc;if(b!==null)o.fillRect(66,66,108*b/100,32);o.fillRect(180,72,8,20);
+  tx(b===null?'—':b+' %',200,96,40,bc,'left',true);
+  tx('⏱ '+mmss(tel.flightTime),60,152,32,'#fff');
+  // Haut droite : mode, GPS, état de l'IA
+  tx(({BEBOP:'Bebop',MAVIC:'Mavic Mini',SIM:'Simulation'}[s.mode]||'')+(tel.flightMode?' · '+tel.flightMode:''),w-60,96,32,'#fff','right',true);
+  tx((typeof tel.sats==='number'?'🛰 '+tel.sats+' sat':'')+(s.guardOn?'   🛡':''),w-60,140,28,num(tel.sats,0)>=8?HUD:WARN,'right');
+  const ia=s.manual?['🕹 MANUEL',CYAN]:s.paused?['IA EN PAUSE',WARN]:[(s.confirm===false?'🤝 IA SEULE':'✋ IA (je valide)'),HUD];
+  tx(ia[0],w-60,186,30,ia[1],'right',true);
+  // Cap
+  const hd=num(tel.heading,0), tw=640, ppx=tw/90, ty=70;
+  o.strokeStyle='rgba(124,252,154,.9)';o.lineWidth=3;
+  for(let a=Math.ceil((hd-45)/5)*5;a<=hd+45;a+=5){const x=cx+(a-hd)*ppx;o.beginPath();o.moveTo(x,ty);o.lineTo(x,ty+(a%15===0?24:12));o.stroke();
+    if(a%15===0){const n=((a%360)+360)%360;tx(n%45===0?card(n):String(n),x,ty+54,24,HUD,'center',n%45===0);}}
+  if(typeof tel.homeBearing==='number'){const rel=norm(tel.homeBearing-hd);const x=cx+Math.max(-45,Math.min(45,rel))*ppx;tx('▼H',x,ty-6,26,CYAN,'center',true);}
+  tx(String(Math.round(((hd%360)+360)%360)).padStart(3,'0')+'°',cx,ty+96,34,HUD,'center',true);
+  // Horizon (fin) et réticule
+  const pitch=num(tel.pitch,0), roll=num(tel.roll,0), ppd=h/45;
+  o.save();o.translate(cx,cy);o.rotate(-roll*Math.PI/180);o.strokeStyle='rgba(124,252,154,.75)';o.lineWidth=3;
+  o.beginPath();o.moveTo(-420,pitch*ppd);o.lineTo(-140,pitch*ppd);o.moveTo(140,pitch*ppd);o.lineTo(420,pitch*ppd);o.stroke();o.restore();
+  o.strokeStyle=WARN;o.lineWidth=4;o.beginPath();o.moveTo(cx-50,cy);o.lineTo(cx-18,cy);o.lineTo(cx-9,cy+10);o.lineTo(cx,cy);o.lineTo(cx+9,cy+10);o.lineTo(cx+18,cy);o.lineTo(cx+50,cy);o.stroke();
+  // Gauche : vitesse ; droite : altitude, vitesse verticale, plafond
+  tx(f1(tel.hSpeed)+' m/s',120,cy+12,40,HUD,'left',true);tx('VIT',120,cy-36,22,GREY,'left',true);
+  tx(f1(s.alt)+' m',w-120,cy+12,44,num(s.alt,0)>num(s.ceiling,99)-0.3?RED:HUD,'right',true);tx('ALT  (max '+Math.round(num(s.ceiling,3))+')',w-120,cy-36,22,GREY,'right',true);
+  const vs=num(tel.vSpeed,0);if(Math.abs(vs)>0.1)tx((vs>0?'▲ ':'▼ ')+f1(Math.abs(vs)),w-120,cy+60,28,WARN,'right',true);
+  // Bas gauche : retour au départ
+  const rel=norm(num(tel.homeBearing,0)-hd), hx=110, hy=h-150;
+  o.strokeStyle=CYAN;o.lineWidth=3;o.beginPath();o.arc(hx,hy,48,0,Math.PI*2);o.stroke();
+  o.save();o.translate(hx,hy);o.rotate(rel*Math.PI/180);o.fillStyle=CYAN;o.beginPath();o.moveTo(0,-40);o.lineTo(-14,14);o.lineTo(0,4);o.lineTo(14,14);o.closePath();o.fill();o.restore();
+  tx(f1(num(tel.homeDist,num(s.dist,0)))+' m',180,hy+14,38,CYAN,'left',true);
+  // Bas droite : nacelle, détecteur
+  tx('🎥 '+Math.round(num(tel.gimbal,0))+'°',w-60,h-170,32,HUD,'right',true);
+  if(s.guardWatching){const tc=num(s.ttc,null);tx('🛡 '+(tc===null||tc>9.9?'libre':f1(tc)+' s'),w-60,h-124,28,tc!==null&&tc<3?WARN:HUD,'right',true);}
+  tx(follow?'↻ suit la tête':'↻ rotation coupée',w-60,h-82,24,follow?GREY:WARN,'right');
+  // Étape du plan en cours
+  if(s.plan&&s.plan.steps){const cur=s.plan.steps.findIndex(x=>x.s==='DOING');const st=cur>=0?s.plan.steps[cur]:null;
+    if(st)tx('▶ '+(cur+1)+'/'+s.plan.steps.length+' '+st.t.slice(0,60),cx,h-210,28,CYAN,'center',true);}
+  // Centre : alertes
+  if(s.obstacle){o.fillStyle='rgba(211,47,47,.9)';o.fillRect(cx-300,cy-170,600,90);tx('⚠ OBSTACLE : ARRÊT',cx,cy-110,46,'#fff','center',true);}
+  if(s.manual)tx('🕹 TU AS LA MAIN',cx,cy+150,40,CYAN,'center',true);
+  if(num(s.battery,100)<30)tx('BATTERIE FAIBLE',cx,cy-210,40,RED,'center',true);
+  if(s.mode&&s.mode!=='NONE'&&s.linkUp===false)tx('LIAISON PERDUE',cx,cy-260,44,RED,'center',true);
+  // Bas centre : proposition, sous-titres
+  let by=h-60;
+  if(s.pending){o.fillStyle='rgba(255,193,7,.92)';o.fillRect(cx-480,by-56,960,60);o.font='bold 28px sans-serif';o.textAlign='center';o.fillStyle='#000';o.fillText('L\'IA PROPOSE : '+s.pending+' — OUI / NON',cx,by-16);by-=74;}
+  if(s.say){o.font='32px sans-serif';const lines=[];let line='';for(const wd of s.say.split(' ')){const tt=line?line+' '+wd:wd;if(o.measureText(tt).width>1100&&line){lines.push(line);line=wd;}else line=tt;}if(line)lines.push(line);
+    for(const l of lines.slice(-2).reverse()){tx(l,cx,by,32,'#fff','center');by-=42;}}
+}
+
 // ======================= Images et état =======================
 async function frameLoop(){
   while(true){
@@ -585,12 +643,14 @@ async function startVR(){
   const fs='precision mediump float;varying vec2 u;uniform sampler2D s;void main(){gl_FragColor=texture2D(s,u);}';
   function sh(type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);return s;}
   const pr=gl.createProgram();gl.attachShader(pr,sh(gl.VERTEX_SHADER,vs));gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,fs));gl.linkProgram(pr);
-  // Écran du cockpit fixé devant les yeux (environ 80° de large)
-  const QW=1.95,QH=QW/2,Z=-2.3;
+  // Vidéo en grand devant les yeux (16:9). Joystick haut/bas : agrandir ou réduire.
+  let size=1.0;
   const buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf);
-  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-QW,-QH,Z,0,1, QW,-QH,Z,1,1, -QW,QH,Z,0,0, QW,QH,Z,1,0]),gl.STATIC_DRAW);
+  function setQuad(){const Z=-2.0,QW=1.75*size,QH=QW*9/16;
+    gl.bindBuffer(gl.ARRAY_BUFFER,buf);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-QW,-QH,Z,0,1, QW,-QH,Z,1,1, -QW,QH,Z,0,0, QW,QH,Z,1,0]),gl.STATIC_DRAW);}
+  setQuad();
   const tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
   const aP=gl.getAttribLocation(pr,'p'),aT=gl.getAttribLocation(pr,'t'),uP=gl.getUniformLocation(pr,'P');
   session.addEventListener('select',()=>{recenter=true;});
@@ -599,6 +659,8 @@ async function startVR(){
   let uploaded=false;
   function onFrame(tm,fr){
     session.requestAnimationFrame(onFrame);
+    for(const src of session.inputSources){const gp=src.gamepad;if(!gp||gp.axes.length<4)continue;const ay=gp.axes[3];
+      if(Math.abs(ay)>0.5){size=Math.max(0.6,Math.min(1.5,size-ay*0.01));setQuad();}}
     const pose=fr.getViewerPose(ref);if(!pose)return;
     const q=pose.transform.orientation;
     const fx=-2*(q.x*q.z+q.w*q.y), fy=-2*(q.y*q.z-q.w*q.x), fz=-(1-2*(q.x*q.x+q.y*q.y));
@@ -607,7 +669,7 @@ async function startVR(){
       fetch('/head?p='+pitch.toFixed(1)+'&y='+yaw.toFixed(1)+'&f='+(follow?1:0)+'&c='+(recenter?1:0),{cache:'no-store'})
         .then(r=>r.json()).then(s=>{state=s;dirty=true;}).catch(()=>{});
       recenter=false;}
-    if(dirty||!uploaded){draw();dirty=false;gl.bindTexture(gl.TEXTURE_2D,tex);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,C);gl.generateMipmap(gl.TEXTURE_2D);uploaded=true;}
+    if(dirty||!uploaded){drawOSD();dirty=false;gl.bindTexture(gl.TEXTURE_2D,tex);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,V);uploaded=true;}
     const layer=session.renderState.baseLayer;
     gl.bindFramebuffer(gl.FRAMEBUFFER,layer.framebuffer);
     gl.clearColor(0,0,0,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);

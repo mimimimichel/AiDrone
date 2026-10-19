@@ -69,6 +69,12 @@ abstract class DroneBase(val limits: Limits) {
      */
     open fun headLook(pitch: Double, yaw: Double, follow: Boolean, recenter: Boolean) {}
 
+    /** Le pilote a repris la main avec sa radiocommande : l'application ne commande plus les déplacements. */
+    open val manualControl: Boolean get() = false
+
+    /** Donne (true) ou rend (false) les commandes au pilote. */
+    open fun setManual(on: Boolean) {}
+
     /**
      * Télémétrie pour le cockpit du casque. Par défaut : estimation interne (odométrie).
      * heading : cap (°) ; homeDist / homeBearing : distance (m) et cap absolu (°) du point de départ.

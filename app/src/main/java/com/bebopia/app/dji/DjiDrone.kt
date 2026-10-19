@@ -36,6 +36,24 @@ class DjiDrone(
 
     @Volatile private var cancel = false
     @Volatile private var moving = false
+    @Volatile private var manual = false
+
+    override val manualControl: Boolean get() = manual
+
+    /** Pilote aux commandes : on coupe le pilotage par l'application (les manches reprennent effet). */
+    override fun setManual(on: Boolean) {
+        if (on == manual) return
+        manual = on
+        if (on) {
+            cancel = true
+            headFollow = false
+            call(4) { link.disableVirtualStick(it) }?.let { log("reprise en main : $it") }
+        } else {
+            call(4) { link.enableVirtualStick(it) }?.let { log("pilotage par l'application : $it") }
+            droneYawCenter = link.heading()
+            headYawCenter = headYaw
+        }
+    }
 
     // ---- suivi de la tête (casque) ----------------------------------------------------------
     @Volatile private var headSeenAt = 0L
@@ -62,7 +80,7 @@ class DjiDrone(
             headYawCenter = yaw
         }
         headYaw = yaw
-        headFollow = follow
+        headFollow = follow && !manual
         if (follow && yawLoop == null) {
             yawLoop = Thread({ followLoop() }, "suivi-tete").apply { isDaemon = true; start() }
         }
@@ -78,7 +96,7 @@ class DjiDrone(
         var sending = false
         while (true) {
             Thread.sleep(50)
-            val active = headFollow && System.currentTimeMillis() - headSeenAt < 1000 && !moving && link.flying()
+            val active = headFollow && !manual && System.currentTimeMillis() - headSeenAt < 1000 && !moving && link.flying()
             val center = droneYawCenter
             if (!active || center == null) {
                 if (sending) {
@@ -199,6 +217,7 @@ class DjiDrone(
     }
 
     private fun moveNow(forward: Double, right: Double, down: Double, yawRad: Double) {
+        if (manual) throw IllegalStateException("le pilote a repris la main avec la radiocommande")
         cancel = false
         val yawDeg = Math.toDegrees(yawRad)
         val dist = hypot(forward, right)

@@ -15,6 +15,12 @@ class Detection(
     val description: String,
 )
 
+/** Ce qu'il y a sur la trajectoire juste devant le drone. */
+class PathResult(val clear: Boolean, val nearestM: Double?, val description: String)
+
+/** Vérifie, sur l'image, s'il y a un obstacle dans l'axe avant d'avancer de [forwardM] mètres. */
+fun interface PathChecker { fun check(jpegBase64: String, forwardM: Double): PathResult }
+
 /** Repère un objet sur une image JPEG (base64). Bloquant, peut lever une exception. */
 fun interface ObjectDetector { fun find(jpegBase64: String, target: String): Detection }
 

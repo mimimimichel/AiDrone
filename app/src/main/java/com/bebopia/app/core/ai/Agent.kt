@@ -93,6 +93,37 @@ class Agent(
     /** Appelé à chaque changement notable (pour rafraîchir l'interface). */
     var onChange: (() -> Unit)? = null
 
+    /** Vérification d'obstacle sur l'image avant chaque avancée (null sans clé Gemini). */
+    var pathChecker: PathChecker? = null
+
+    /**
+     * Avant d'avancer : le modèle de vision regarde s'il y a un obstacle dans l'axe.
+     * Renvoie la distance autorisée (raccourcie pour garder une marge), ou un message de refus.
+     */
+    private fun safeForward(forward: Double): Pair<Double, String?> {
+        val checker = pathChecker ?: return forward to null
+        if (forward < 0.15) return forward to null
+        val frame = eyes.captureJpegBase64() ?: return forward to "refusé : pas d'image pour vérifier la trajectoire"
+        val r = try {
+            checker.check(frame, forward)
+        } catch (e: Exception) {
+            // Vérification impossible (réseau) : on avance quand même, mais à petits pas.
+            log("vérification de trajectoire impossible : ${e.message}")
+            return minOf(forward, 0.4) to null
+        }
+        val margin = 0.6
+        val nearest = r.nearestM
+        if (r.clear && (nearest == null || nearest >= forward + margin)) return forward to null
+        val allowed = (nearest ?: 0.0) - margin
+        if (allowed >= 0.2) {
+            system("👁 Obstacle à ~%.1f m devant (%s) : pas raccourci à %.1f m.".format(nearest, r.description.take(60), allowed))
+            return allowed to null
+        }
+        system("👁 Obstacle devant (%s) : avance refusée.".format(r.description.take(80)))
+        return 0.0 to "refusé : obstacle sur la trajectoire à ~%s m (%s). Recule, tourne ou monte pour le contourner."
+            .format(nearest?.let { "%.1f".format(it) } ?: "?", r.description)
+    }
+
     /** Recherche active d'un objet (null sans clé Gemini). */
     var finder: ObjectFinder? = null
 
@@ -209,6 +240,19 @@ class Agent(
     /** « mode confiance » / « mode prudent » à la voix (ou écrit) : changé par l'application. */
     var onTrust: ((Boolean) -> Unit)? = null
 
+    /** « à toi », « reprends les commandes » : le pilote rend la main à l'IA. */
+    var onHandBack: (() -> Unit)? = null
+
+    /** Le pilote reprend la main avec la radiocommande. */
+    fun pilotTakeover() {
+        paused = true
+        pending = null
+        lastText = "Le pilote a la main"
+        system("🕹 Tu as repris la main avec la radiocommande : l'IA est en pause. Touche ▶ IA ou dis « à toi » pour lui rendre les commandes.")
+        speak("D'accord, tu as la main.")
+        onEvent?.invoke("Le pilote a repris les commandes avec sa radiocommande : tu es en pause, ne bouge plus.", false)
+    }
+
     private fun yesNo(text: String): Boolean {
         val norm = normalize(text)
         val words = norm.split(' ').filter { it.isNotBlank() }.toSet()
@@ -218,6 +262,10 @@ class Agent(
         }
         if (norm.contains("mode prudent") || norm.contains("mode validation") || norm.contains("demande moi avant")) {
             onTrust?.invoke(false)
+            return true
+        }
+        if (words.size <= 6 && (norm.contains("a toi") || norm.contains("reprends les commandes") || norm.contains("reprends la main"))) {
+            onHandBack?.invoke()
             return true
         }
         // Plan en attente (et pas de déplacement en attente) : le oui/non porte sur le plan.
@@ -251,6 +299,7 @@ class Agent(
     fun aiAction(action: Map<String, Any?>): String {
         val t = action["type"] as? String ?: return "refusé : type d'action manquant"
         if (t == "land") return execute(action)
+        if (drone.manualControl) return "refusé : le pilote a repris la main avec sa radiocommande. Attends qu'il te rende les commandes."
         if (paused) return "refusé : IA en pause. Le pilote doit appuyer sur « ▶ IA » pour te laisser piloter."
         if (steps >= drone.limits.maxSteps) {
             thread(isDaemon = true) { autoStop("nombre maximum d'actions atteint, j'atterris") }
@@ -637,7 +686,14 @@ class Agent(
             when (action["type"] as? String) {
                 "takeoff" -> drone.takeoff()
                 "land" -> drone.land()
-                "move" -> drone.move(num(action, "forward"), num(action, "right"), num(action, "up"), num(action, "yaw"))
+                "move" -> {
+                    val (fwd, refusal) = safeForward(num(action, "forward"))
+                    if (refusal != null) refusal
+                    else {
+                        val r = drone.move(fwd, num(action, "right"), num(action, "up"), num(action, "yaw"))
+                        if (fwd < num(action, "forward") - 0.01) r + " (pas raccourci à %.1f m à cause d'un obstacle)".format(fwd) else r
+                    }
+                }
                 "tilt_camera" -> drone.tiltCamera(num(action, "degrees"))
                 "hover" -> drone.hover(num(action, "seconds", 1.0))
                 "return_home" -> drone.returnHome()
