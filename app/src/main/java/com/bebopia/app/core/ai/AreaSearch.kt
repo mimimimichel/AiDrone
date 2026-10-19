@@ -44,6 +44,11 @@ class AreaSearch(
     /** Carte : zones regardées et repères (cible, pistes). */
     var nav: Navigator? = null
 
+    /** Détecteur d'objets du téléphone : regarde chaque image, l'IA ne sert qu'à confirmer. */
+    var fast: com.bebopia.app.core.vision.FastDetector? = null
+    private var classes: Set<String>? = null
+    private var generic = false
+
     private var plan = Plan("", emptyList())
     private var target = ""
     private var sightings = 0
@@ -53,8 +58,11 @@ class AreaSearch(
         onPlan(plan)
     }
 
-    fun run(targetName: String, radiusReq: Double?, altitudeReq: Double?, approach: Boolean): String {
+    fun run(targetName: String, radiusReq: Double?, altitudeReq: Double?, approach: Boolean, hint: String? = null): String {
         target = targetName.trim().ifEmpty { return "refusé : objet à chercher non précisé" }
+        classes = if (fast != null) com.bebopia.app.core.vision.CocoClasses.forTarget(target, hint) else null
+        generic = classes != null && com.bebopia.app.core.vision.CocoClasses.isGeneric(target)
+        if (classes != null) report("📱 Le téléphone reconnaît ce genre d'objet (${classes!!.first()}) : il analyse chaque image, l'IA confirme")
         val l = drone.limits
         val bat = drone.battery()
         if (bat != null && bat < MIN_START_BATTERY && !simulation) {
@@ -215,18 +223,41 @@ class AreaSearch(
         nav?.addCoverage(if (simulation) 1.0 else (drone.altitude() * 1.6).coerceIn(3.0, 60.0))
         drone.tiltCamera(SCAN_TILT)
         if (simulation) report("(Simulation) Incline un peu le téléphone vers le bas")
-        for (i in 0 until 4) {
-            val d = look()
-            if (d.found && d.confidence >= 0.5) return d
-            if (d.found && d.confidence >= 0.25) {
-                // Piste : quelque chose qui pourrait être la cible. On va voir de plus près.
-                checkTrack(d)?.let { return it }
-            } else {
-                report("🔎 ${(drone.heading).roundToInt()}° : ${d.description.take(70)}")
+        // Tour complet par pas de 45° : le téléphone regarde chaque vue ; l'IA tous les 90°, ou dès que le téléphone voit quelque chose.
+        for (i in 0 until 8) {
+            val local = quick()
+            if (local != null) {
+                report("📱 ${(drone.heading).roundToInt()}° : peut-être « $target » (${local.label}, ${(local.score * 100).roundToInt()} %), l'IA vérifie")
+                val d = look()
+                if (d.found && d.confidence >= 0.5) return d
+                if (d.found && d.confidence >= 0.25) checkTrack(d)?.let { return it }
+                else if (generic && local.score >= 0.6) {
+                    report("📱 L'IA ne la voit pas, mais le téléphone est sûr de lui : je vais voir")
+                    checkTrack(Detection(true, local.score, local.box.cx, local.box.cy, local.box.w, local.box.h, local.label))?.let { return it }
+                } else report("Fausse alerte du téléphone : ${d.description.take(60)}")
+            } else if (i % 2 == 0) {
+                val d = look()
+                if (d.found && d.confidence >= 0.5) return d
+                if (d.found && d.confidence >= 0.25) {
+                    // Piste : quelque chose qui pourrait être la cible. On va voir de plus près.
+                    checkTrack(d)?.let { return it }
+                } else {
+                    report("🔎 ${(drone.heading).roundToInt()}° : ${d.description.take(70)}")
+                }
             }
-            turn(90.0)
+            turn(45.0)
         }
         return null
+    }
+
+    /** Le détecteur du téléphone sur l'image actuelle (en 3 morceaux, pour les petits objets lointains). */
+    private fun quick(): com.bebopia.app.core.vision.Seen? {
+        val f = fast ?: return null
+        val c = classes ?: return null
+        checkStop()
+        Thread.sleep(if (simulation) 300 else 700) // image nette après la rotation
+        return runCatching { f.detect(tiled = true) }.getOrDefault(emptyList())
+            .filter { it.label in c && it.score >= 0.4 }.maxByOrNull { it.score }
     }
 
     /** Une piste incertaine : se tourner vers elle, s'en rapprocher et regarder à nouveau. */

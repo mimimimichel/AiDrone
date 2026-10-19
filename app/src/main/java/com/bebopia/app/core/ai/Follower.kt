@@ -2,6 +2,9 @@ package com.bebopia.app.core.ai
 
 import com.bebopia.app.core.DroneBase
 import com.bebopia.app.core.vision.Box
+import com.bebopia.app.core.vision.CocoClasses
+import com.bebopia.app.core.vision.FastDetector
+import com.bebopia.app.core.vision.Seen
 import com.bebopia.app.core.vision.GrayFrames
 import com.bebopia.app.core.vision.TargetTracker
 import java.util.concurrent.atomic.AtomicReference
@@ -44,6 +47,18 @@ class Follower(
 
     private val tracker = TargetTracker()
 
+    /** Détecteur d'objets du téléphone (null : l'IA seule repère la cible). */
+    var fast: FastDetector? = null
+
+    /** Catégories du détecteur qui correspondent à la cible (null : il ne la connaît pas). */
+    private var classes: Set<String>? = null
+
+    private fun candidates(tiled: Boolean = false): List<Seen> {
+        val f = fast ?: return emptyList()
+        val c = classes ?: return emptyList()
+        return runCatching { f.detect(tiled) }.getOrDefault(emptyList()).filter { it.label in c && it.score >= 0.35 }
+    }
+
     @Volatile var target: String? = null
         private set
 
@@ -54,17 +69,19 @@ class Follower(
 
     private val vfovDeg get() = hfovDeg * 9 / 16
 
-    fun follow(targetName: String, minutes: Double?): String {
+    fun follow(targetName: String, minutes: Double?, hint: String? = null): String {
         if (!drone.flying) return "refusé : le drone est au sol, décolle d'abord"
         val t = targetName.trim().ifEmpty { return "refusé : cible non précisée" }
         target = t
+        classes = if (fast != null && frames != null) CocoClasses.forTarget(t, hint) else null
         tracker.reset()
         val end = System.currentTimeMillis() + ((minutes ?: MAX_MINUTES.toDouble()).coerceIn(0.5, MAX_MINUTES.toDouble()) * 60_000).toLong()
         return try {
             report("🎯 Je cherche « $t » pour la suivre (dis « stop » pour arrêter)")
             val first = acquire(t) ?: return "pas trouvé « $t » autour de moi : suivi annulé"
             val refSize = sizeOf(first).coerceIn(0.08, 0.5)
-            report("🎯 Je suis « $t » : le téléphone la suit sur la vidéo, l'IA vérifie toutes les 3 s")
+            report("🎯 Je suis « $t » : le téléphone la suit sur la vidéo" +
+                (if (classes != null) " et la reconnaît (${classes!!.first()})" else "") + ", l'IA vérifie toutes les 3 s")
             onSeen(t)
             if (frames == null) followByAi(t, refSize, end) else followLocal(t, refSize, end)
         } catch (e: Stop) {
@@ -90,10 +107,23 @@ class Follower(
     private fun acquire(t: String): Detection? {
         for (i in 0 until 8) {
             if (shouldStop()) throw Stop("suivi arrêté par le pilote")
+            // Le détecteur du téléphone d'abord : une seule cible possible (et demande simple) -> pas besoin d'attendre l'IA.
+            val local = candidates().ifEmpty { candidates(tiled = true) }
+            if (local.size == 1 || (local.isNotEmpty() && CocoClasses.isGeneric(t))) {
+                val best = local.maxBy { it.score }
+                if (best.score >= 0.5) {
+                    frames?.grab()?.let { g -> tracker.start(g, best.box) }
+                    report("🎯 Repérée par le téléphone (${best.label}, ${(best.score * 100).toInt()} %) : l'IA va confirmer")
+                    return Detection(true, best.score, best.box.cx, best.box.cy, best.box.w, best.box.h, best.label)
+                }
+            }
             val jpeg = eyes.captureJpegBase64() ?: run { Thread.sleep(300); null } ?: continue
             val d = try { detector.find(jpeg, t) } catch (e: Exception) { throw Stop("suivi impossible : analyse d'image impossible (${e.message})") }
             if (d.found && d.confidence >= 0.4) {
-                frames?.grab()?.let { g -> tracker.start(g, Box(d.cx, d.cy, d.w, d.h)) }
+                // Plusieurs candidats : l'IA a dit lequel ; on prend la boîte du détecteur qui lui correspond (plus précise).
+                val gb = Box(d.cx, d.cy, d.w, d.h)
+                val match = local.maxByOrNull { it.box.iou(gb) }?.takeIf { it.box.iou(gb) > 0.3 }?.box ?: gb
+                frames?.grab()?.let { g -> tracker.start(g, match) }
                 confirmedAt = System.currentTimeMillis()
                 return d
             }
@@ -108,6 +138,18 @@ class Follower(
     private fun followLocal(t: String, refSize: Double, end: Long): String {
         val src = frames!!
         val pendingCheck = AtomicReference<Check?>(null)
+        // Détecteur du téléphone en continu, dans son propre fil (5 à 15 images/s selon le téléphone)
+        val latestSeen = AtomicReference<List<Seen>?>(null)
+        val detecting = java.util.concurrent.atomic.AtomicBoolean(classes != null)
+        val detThread = if (detecting.get()) Thread({
+            while (detecting.get() && target != null) {
+                val l = candidates()
+                latestSeen.set(l)
+                if (l.isEmpty()) Thread.sleep(40)
+            }
+        }, "suivi-detecteur").apply { isDaemon = true; start() } else null
+        var lastPos: Box? = tracker.box
+        try {
         val checking = java.util.concurrent.atomic.AtomicBoolean(false)
         var lastCheck = System.currentTimeMillis()
         var lostSince = 0L
@@ -126,6 +168,26 @@ class Follower(
                 continue
             }
             var b = tracker.update(g)
+
+            // Ce que voit le détecteur du téléphone : recale le suivi, ou le retrouve tout de suite s'il a décroché.
+            latestSeen.getAndSet(null)?.let { seen ->
+                val ref = b ?: lastPos
+                if (ref != null && seen.isNotEmpty()) {
+                    val near = seen.maxBy { it.box.iou(ref) - 0.5 * (abs(it.box.cx - ref.cx) + abs(it.box.cy - ref.cy)) }
+                    val iou = near.box.iou(ref)
+                    val dist = abs(near.box.cx - ref.cx) + abs(near.box.cy - ref.cy)
+                    if (b != null && iou in 0.35..0.75) {
+                        tracker.start(g, near.box) // même cible, boîte plus juste
+                        b = tracker.box
+                    } else if (b == null && (iou > 0.2 || dist < 0.2)) {
+                        tracker.start(g, near.box)
+                        b = tracker.box
+                        if (lostSince != 0L && t0 - lostSince > 300) report("🎯 « $t » retrouvée par le téléphone")
+                        lostSince = 0L
+                    }
+                }
+            }
+            if (b != null) lastPos = b
 
             // Vérification par l'IA, en arrière-plan (ne ralentit pas le suivi)
             if (!checking.get() && t0 - lastCheck > CHECK_MS) {
@@ -222,6 +284,10 @@ class Follower(
             // Une dizaine d'images par seconde
             val wait = 90 - (System.currentTimeMillis() - t0)
             if (wait > 0) Thread.sleep(wait)
+        }
+        } finally {
+            detecting.set(false)
+            detThread?.join(500)
         }
     }
 

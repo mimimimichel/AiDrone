@@ -43,9 +43,31 @@ class ObjectFinder(
 ) {
     private class Abort(msg: String) : Exception(msg)
 
-    fun search(target: String, approach: Boolean): String {
+    /** Détecteur d'objets du téléphone : pour une demande simple (« un chien »), il suffit, sans attendre l'IA. */
+    var fast: com.bebopia.app.core.vision.FastDetector? = null
+    private var classes: Set<String>? = null
+    private var generic = false
+
+    /** Le téléphone voit la cible (demande simple seulement), sinon null. */
+    private fun quick(): Detection? {
+        val f = fast ?: return null
+        val c = classes ?: return null
+        if (!generic) return null
+        checkStop()
+        Thread.sleep(if (simulation) 300 else 700)
+        val s = runCatching { f.detect(tiled = true) }.getOrDefault(emptyList())
+            .filter { it.label in c && it.score >= 0.55 }.maxByOrNull { it.score } ?: return null
+        return Detection(true, s.score, s.box.cx, s.box.cy, s.box.w, s.box.h, "${s.label} vu par le téléphone (${(s.score * 100).roundToInt()} %)")
+    }
+
+    /** Image analysée : le téléphone d'abord si la demande est simple, sinon l'IA. */
+    private fun lookFast(target: String): Detection = quick() ?: look(target)
+
+    fun search(target: String, approach: Boolean, hint: String? = null): String {
         if (!drone.flying) return "refusé : le drone est au sol, décolle d'abord"
         val t = target.trim().ifEmpty { return "refusé : objet à chercher non précisé" }
+        classes = if (fast != null) com.bebopia.app.core.vision.CocoClasses.forTarget(t, hint) else null
+        generic = classes != null && com.bebopia.app.core.vision.CocoClasses.isGeneric(t)
         return try {
             report("🔎 Je cherche « $t »")
             val startTilt = drone.cameraTilt.toDouble()
@@ -57,7 +79,7 @@ class ObjectFinder(
                     if (simulation) report("(Simulation) Incline le téléphone vers le bas")
                 }
                 for (i in 0 until 8) {
-                    val d = look(t)
+                    val d = lookFast(t)
                     if (d.found && d.confidence >= 0.45) return found(t, d, approach)
                     report("🔎 ${i * 45}° : pas de « $t » (${d.description.take(80)})")
                     turn(45.0)
@@ -114,7 +136,7 @@ class ObjectFinder(
         val off = offset(d)
         if (abs(off) > 6) {
             turn(off)
-            val again = look(target)
+            val again = lookFast(target)
             if (again.found) d = again
         }
         if (!approach) {
@@ -130,7 +152,7 @@ class ObjectFinder(
                 return "trouvé mais approche arrêtée : $r. Objet : ${d.description}"
             }
             if (simulation) report("(Simulation) Avance le téléphone de ${(step * 100).roundToInt()} cm vers l'objet")
-            val next = look(target)
+            val next = lookFast(target)
             if (!next.found) return "approche : j'ai perdu « $target » de vue après avoir avancé"
             d = next
             val o = offset(d)

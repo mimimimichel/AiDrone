@@ -128,6 +128,9 @@ Les messages entre crochets [Message de l'application…] viennent de l'applicat
                 "properties" to mapOf(
                     "target" to mapOf("type" to "STRING", "description" to "L'objet cherché, précis (ex. « tulipe rouge », « robot aspirateur noir »)."),
                     "approach" to mapOf("type" to "BOOLEAN", "description" to "true pour s'approcher de l'objet une fois trouvé."),
+                    "classe" to mapOf("type" to "STRING", "description" to "Si la cible est un objet courant, sa catégorie en anglais pour le détecteur du téléphone " +
+                    "(person, dog, cat, horse, sheep, cow, bird, car, truck, bus, motorcycle, bicycle, boat, sports ball, backpack, handbag, " +
+                    "suitcase, umbrella, chair, bench, bottle, cup, potted plant, vase, teddy bear, cell phone, laptop, book…). Vide sinon."),
                 ),
                 "required" to listOf("target"),
             ),
@@ -143,6 +146,9 @@ Les messages entre crochets [Message de l'application…] viennent de l'applicat
                     "radius_m" to num("Rayon de recherche autour du départ, en mètres (vide = le maximum réglé par le pilote)."),
                     "altitude_m" to num("Altitude de recherche en mètres (vide = 8 m ou le plafond réglé)."),
                     "approach" to mapOf("type" to "BOOLEAN", "description" to "true pour s'approcher de la cible une fois trouvée (en gardant une marge)."),
+                    "classe" to mapOf("type" to "STRING", "description" to "Si la cible est un objet courant, sa catégorie en anglais pour le détecteur du téléphone " +
+                    "(person, dog, cat, horse, sheep, cow, bird, car, truck, bus, motorcycle, bicycle, boat, sports ball, backpack, handbag, " +
+                    "suitcase, umbrella, chair, bench, bottle, cup, potted plant, vase, teddy bear, cell phone, laptop, book…). Vide sinon."),
                 ),
                 "required" to listOf("target"),
             ),
@@ -201,6 +207,9 @@ Les messages entre crochets [Message de l'application…] viennent de l'applicat
             "parameters" to mapOf("type" to "OBJECT", "properties" to mapOf(
                 "target" to mapOf("type" to "STRING", "description" to "La cible, précise (ex. « chien noir », « personne en veste rouge »)."),
                 "minutes" to num("Durée maximale (vide = 10 min)."),
+                "classe" to mapOf("type" to "STRING", "description" to "Si la cible est un objet courant, sa catégorie en anglais pour le détecteur du téléphone " +
+                "(person, dog, cat, horse, sheep, cow, bird, car, truck, bus, motorcycle, bicycle, boat, sports ball, backpack, handbag, " +
+                "suitcase, umbrella, chair, bench, bottle, cup, potted plant, vase, teddy bear, cell phone, laptop, book…). Vide sinon."),
             ), "required" to listOf("target")),
         ),
         mapOf(

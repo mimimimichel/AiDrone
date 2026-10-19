@@ -327,6 +327,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             report = { a.addChat(Role.SYSTEM, it) },
             onPlan = { a.missionPlan(it) },
         )
+        // Détecteur d'objets du téléphone (sans Internet) : recherche et suivi plus rapides
+        localDetector?.close()
+        val ld = com.bebopia.app.android.LocalDetector(getApplication(), frame = {
+            if (simulation) previewView?.bitmap?.let { b ->
+                val w = 640
+                val h = (w.toFloat() * b.height / b.width).toInt().coerceAtLeast(1)
+                android.graphics.Bitmap.createScaledBitmap(b, w, h, true).also { if (it !== b) b.recycle() }
+            } else textureView?.takeIf { it.isAvailable }?.getBitmap(640, 360)
+        }, log = { a.addChat(Role.SYSTEM, it) })
+        localDetector = ld
+        a.finder?.fast = ld
+        a.areaSearch?.fast = ld
         // Carte, suivi, cinéma, journal de vol
         val n = Navigator(d, simulation, shouldStop = { a.paused }, report = { a.addChat(Role.SYSTEM, it) },
             save = { prefs.edit().putString("waypoints", it).apply() })
@@ -336,7 +348,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         a.areaSearch?.nav = n
         nav = n
         a.follower = Follower(d, eyes, vision, track, hfovDeg = hfov, simulation = simulation, shouldStop = { a.paused },
-            report = { a.addChat(Role.SYSTEM, it) }, onSeen = { t -> n.addPin(t, true, null) })
+            report = { a.addChat(Role.SYSTEM, it) }, onSeen = { t -> n.addPin(t, true, null) }).also { it.fast = ld }
         a.shots = Shots(d, simulation, shouldStop = { a.paused }, report = { a.addChat(Role.SYSTEM, it) },
             pathCheck = { { fwd: Double -> a.safeForward(fwd) } })
         val log = FlightLog(
@@ -354,6 +366,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- carte, journal, mémoire -------------------------------------------------------------
     @Volatile private var nav: Navigator? = null
+    @Volatile private var localDetector: com.bebopia.app.android.LocalDetector? = null
     @Volatile private var flightLog: FlightLog? = null
     @Volatile private var weakSignalSince = 0L
     @Volatile private var recordedFlight = false
@@ -596,6 +609,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         video = null
         nav = null
         flightLog = null
+        localDetector?.let { ld -> thread(isDaemon = true) { ld.close() } }
+        localDetector = null
         mode = Mode.NONE
         a?.stop()
         a?.chat?.let { lines -> synchronized(localChat) { localChat.clear(); localChat.addAll(lines) } }
@@ -682,7 +697,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     "go_to_look", "follow_target", "go_to_point", "tour_points", "film_shot", "retrace_path" -> {
                         val action = when (name) {
                             "go_to_look" -> mapOf("type" to "go_look", "vu" to args["vu"])
-                            "follow_target" -> mapOf("type" to "follow", "target" to args["target"], "minutes" to args["minutes"])
+                            "follow_target" -> mapOf("type" to "follow", "target" to args["target"], "minutes" to args["minutes"], "classe" to args["classe"])
                             "go_to_point" -> mapOf("type" to "goto_point", "point" to args["point"]?.toString())
                             "tour_points" -> mapOf("type" to "tour")
                             "film_shot" -> mapOf("type" to "film", "shot" to args["shot"], "distance_m" to args["distance_m"], "record" to (args["record"] != false))
@@ -707,6 +722,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     "drone_status" -> d.state() + mapOf(
                         "points_marques" to (nav?.describeWaypoints() ?: "aucun"),
                         "action_en_cours" to (a.activity ?: "aucune"),
+                        "detecteur_telephone" to (localDetector?.averageMs?.takeIf { it > 0 }?.let { "%.0f ms par image".format(it) } ?: "pas encore utilisé"),
                         "ia" to if (a.paused) "en pause (ne peut pas bouger)" else "active",
                         "validation_par_le_pilote" to a.confirm,
                         "batterie_pourcent" to d.battery(),
@@ -719,6 +735,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             "radius_m" to args["radius_m"],
                             "altitude_m" to args["altitude_m"],
                             "approach" to (args["approach"] == true),
+                            "classe" to args["classe"],
                         )),
                         "etat" to d.state(),
                     )
@@ -727,6 +744,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             "type" to "search",
                             "target" to (args["target"] as? String ?: ""),
                             "approach" to (args["approach"] == true),
+                            "classe" to args["classe"],
                         )),
                         "etat" to d.state(),
                     )

@@ -740,8 +740,9 @@ class Agent(
                     num(action, "radius_m").takeIf { it > 0 },
                     num(action, "altitude_m").takeIf { it > 0 },
                     action["approach"] == true,
+                    action["classe"]?.toString(),
                 ) ?: "refusé : la mission de recherche a besoin d'une clé Gemini"
-                "search" -> finder?.search(action["target"]?.toString() ?: "", action["approach"] == true)
+                "search" -> finder?.search(action["target"]?.toString() ?: "", action["approach"] == true, action["classe"]?.toString())
                     ?: "refusé : la recherche d'objet a besoin d'une clé Gemini"
                 "go_look" -> nav?.goToLook() ?: "refusé : navigation indisponible"
                 "goto_point" -> nav?.goToPoint(action["point"]?.toString() ?: "") ?: "refusé : navigation indisponible"
@@ -749,7 +750,7 @@ class Agent(
                 "retrace" -> nav?.retrace(action["land"] == true) ?: "refusé : navigation indisponible"
                 "follow" -> {
                     onSnap?.invoke("suivi " + (action["target"] ?: ""))
-                    follower?.follow(action["target"]?.toString() ?: "", num(action, "minutes").takeIf { it > 0 })
+                    follower?.follow(action["target"]?.toString() ?: "", num(action, "minutes").takeIf { it > 0 }, action["classe"]?.toString())
                         ?: "refusé : le suivi a besoin d'une clé Gemini"
                 }
                 "film" -> shots?.film(action["shot"]?.toString() ?: "", num(action, "distance_m").takeIf { it > 0 }, action["record"] != false)

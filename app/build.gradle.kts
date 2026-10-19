@@ -18,8 +18,8 @@ android {
         applicationId = "com.bebopia.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 25
-        versionName = "1.9"
+        versionCode = 26
+        versionName = "2.0"
         manifestPlaceholders["DJI_API_KEY"] = djiApiKey
         // Le kit DJI n'existe que pour les processeurs ARM (tous les téléphones récents).
         // -PonlyArm64=true : APK plus léger, pour les téléphones 64 bits (presque tous depuis 2017).
@@ -63,9 +63,14 @@ android {
     buildFeatures {
         compose = true
     }
+    androidResources {
+        noCompress += "tflite"
+    }
 }
 
 dependencies {
+    // Détecteur d'objets sur le téléphone (sans Internet)
+    implementation("com.google.mediapipe:tasks-vision:0.10.20")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
