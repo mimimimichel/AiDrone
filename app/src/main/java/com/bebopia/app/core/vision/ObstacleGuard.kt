@@ -32,7 +32,18 @@ class ObstacleGuard(
     fun start() {
         if (running) return
         running = true
-        thread(name = "obstacles", isDaemon = true) { loop() }
+        thread(name = "obstacles", isDaemon = true) {
+            while (running) {
+                try {
+                    loop()
+                } catch (e: Throwable) {
+                    // Une erreur du détecteur ne doit jamais faire planter l'application.
+                    log("détecteur d'obstacles : erreur ${e.javaClass.simpleName} ${e.message ?: ""}")
+                    detector.reset()
+                    Thread.sleep(500)
+                }
+            }
+        }
     }
 
     fun stop() {

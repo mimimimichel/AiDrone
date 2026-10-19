@@ -288,15 +288,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun startSimulation() {
         if (mode != Mode.NONE) return
-        val d = SimDrone(limits, ::log)
-        d.connect()
-        val a = makeAgent(d, PreviewEyes { previewView })
-        startGuard(d, a, PreviewGray { previewView })
-        drone = d
-        agent = a
-        mode = Mode.SIM
-        a.start()
-        a.addChat(Role.SYSTEM, "Simulation : la caméra du téléphone remplace celle du drone, rien ne vole. Parle à l'IA ou appuie sur « ▶ IA ».")
+        try {
+            val d = SimDrone(limits, ::log)
+            d.connect()
+            val a = makeAgent(d, PreviewEyes { previewView })
+            startGuard(d, a, PreviewGray { previewView })
+            drone = d
+            agent = a
+            mode = Mode.SIM
+            a.start()
+            a.addChat(Role.SYSTEM, "Simulation : la caméra du téléphone remplace celle du drone, rien ne vole. Parle à l'IA ou appuie sur « ▶ IA ».")
+        } catch (e: Throwable) {
+            Log.e("BebopIA", "simulation", e)
+            guard?.stop()
+            guard = null
+            agent = null
+            drone = null
+            mode = Mode.NONE
+            sysMessage("Impossible de lancer la simulation : ${e.javaClass.simpleName} ${e.message ?: ""}")
+        }
         refresh()
     }
 

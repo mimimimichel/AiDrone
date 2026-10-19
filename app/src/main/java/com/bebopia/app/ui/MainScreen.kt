@@ -415,8 +415,8 @@ private fun CameraPreview(vm: MainViewModel) {
                         preview.setSurfaceProvider(surfaceProvider)
                         provider.unbindAll()
                         provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview)
-                    } catch (e: Exception) {
-                        vm.sysMessage("Caméra indisponible : ${e.message}")
+                    } catch (e: Throwable) {
+                        vm.sysMessage("Caméra indisponible : ${e.javaClass.simpleName} ${e.message ?: ""}")
                     }
                 }, ContextCompat.getMainExecutor(ctx))
             }

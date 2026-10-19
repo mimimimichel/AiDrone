@@ -107,6 +107,19 @@ class GeminiLive(
         .connectTimeout(15, TimeUnit.SECONDS)
         .build()
 
+    /** Fil de travail : une erreur arrête la conversation proprement au lieu de faire planter l'application. */
+    private fun safeThread(name: String, body: () -> Unit) = thread(name = name, isDaemon = true) {
+        try {
+            body()
+        } catch (e: Throwable) {
+            Log.e(TAG, name, e)
+            if (active) {
+                onError("Conversation arrêtée (erreur ${e.javaClass.simpleName} ${e.message ?: ""}). Réappuie sur 🎤.")
+                stop()
+            }
+        }
+    }
+
     // ---- démarrage / arrêt ------------------------------------------------------------------
     fun start() {
         if (active) return
@@ -124,8 +137,8 @@ class GeminiLive(
             return
         }
         connect()
-        thread(name = "live-frames", isDaemon = true) { frameLoop() }
-        thread(name = "live-state", isDaemon = true) { stateLoop() }
+        safeThread("live-frames") { frameLoop() }
+        safeThread("live-state") { stateLoop() }
     }
 
     fun stop() {
@@ -163,8 +176,8 @@ class GeminiLive(
             webSocket.send(setupMessage().toString())
         }
 
-        override fun onMessage(webSocket: WebSocket, text: String) = handle(webSocket, text)
-        override fun onMessage(webSocket: WebSocket, bytes: ByteString) = handle(webSocket, bytes.utf8())
+        override fun onMessage(webSocket: WebSocket, text: String) = handleSafe(webSocket, text)
+        override fun onMessage(webSocket: WebSocket, bytes: ByteString) = handleSafe(webSocket, bytes.utf8())
 
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
             webSocket.close(1000, null)
@@ -235,6 +248,14 @@ class GeminiLive(
     }
 
     // ---- messages du serveur ----------------------------------------------------------------
+    private fun handleSafe(socket: WebSocket, text: String) {
+        try {
+            handle(socket, text)
+        } catch (e: Throwable) {
+            Log.e(TAG, "message", e)
+        }
+    }
+
     private fun handle(socket: WebSocket, text: String) {
         if (socket !== ws) return
         val m = try { JSONObject(text) } catch (e: Exception) { return }
@@ -379,8 +400,8 @@ class GeminiLive(
         framesWritten = 0
         tr.play()
         rec.startRecording()
-        thread(name = "live-mic", isDaemon = true) { micLoop(rec) }
-        thread(name = "live-speaker", isDaemon = true) { speakerLoop(tr) }
+        safeThread("live-mic") { micLoop(rec) }
+        safeThread("live-speaker") { speakerLoop(tr) }
     }
 
     private fun routeToSpeaker() {
