@@ -22,7 +22,11 @@ android {
         versionName = "1.0.3"
         manifestPlaceholders["DJI_API_KEY"] = djiApiKey
         // Le kit DJI n'existe que pour les processeurs ARM (tous les téléphones récents).
-        ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
+        // -PonlyArm64=true : APK plus léger, pour les téléphones 64 bits (presque tous depuis 2017).
+        ndk {
+            abiFilters += if (project.findProperty("onlyArm64") == "true") listOf("arm64-v8a")
+            else listOf("armeabi-v7a", "arm64-v8a")
+        }
     }
 
     useLibrary("org.apache.http.legacy")
