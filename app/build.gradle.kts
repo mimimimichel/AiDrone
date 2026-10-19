@@ -79,6 +79,10 @@ dependencies {
         exclude(module = "fly-safe-database")       // téléchargée par DJI à l'enregistrement
     }
     compileOnly("com.dji:dji-sdk-provided:4.18")
+    // Utilisées par les écrans du kit DJI sans qu'il les déclare
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+    implementation("androidx.recyclerview:recyclerview:1.3.2")
 
     // WebSocket pour la conversation en direct avec Gemini Live
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
