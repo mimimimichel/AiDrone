@@ -109,6 +109,9 @@ public class DjiLink {
         m.put("vps", vps);
         m.put("imuPreheating", imuPreheating);
         m.put("lowBattery", lowBattery);
+        // Position GPS (pour la mini-carte du casque)
+        if (!Double.isNaN(lat) && Math.abs(lat) > 0.0001 && satellites >= 4) { m.put("lat", lat); m.put("lon", lon); }
+        if (homeSet && !Double.isNaN(homeLat) && Math.abs(homeLat) > 0.0001) { m.put("homeLat", homeLat); m.put("homeLon", homeLon); }
         // Distance et cap du point de départ par GPS, si le point de départ est enregistré
         if (homeSet && !Double.isNaN(lat) && !Double.isNaN(homeLat) && satellites >= 6 && Math.abs(lat) > 0.0001) {
             double r = 6371000, p1 = Math.toRadians(lat), p2 = Math.toRadians(homeLat);

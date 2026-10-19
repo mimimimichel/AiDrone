@@ -680,7 +680,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             tls = headsetTls(),
             onMic = { pcm -> live?.feedMic(pcm) },
             onAudioClients = { n -> headsetAudio(n) },
+            onTile = { z, x, y -> mapTiles.get(z, x, y) },
         )
+        startPilotLocation()
         if (!h.start()) {
             sysMessage("Impossible de lancer la vue dans le casque (port 8080 occupé ?).")
             return
@@ -697,6 +699,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     @Volatile private var headsetAudioClients = 0
+    private val mapTiles by lazy { com.bebopia.app.android.MapTiles(getApplication(), router::openApi) }
+
+    // Position du pilote (GPS du téléphone), pour la mini-carte du casque
+    @Volatile private var pilotLat = Double.NaN
+    @Volatile private var pilotLon = Double.NaN
+    private var pilotListening = false
+
+    private fun startPilotLocation() {
+        if (pilotListening) return
+        val app = getApplication<Application>()
+        if (androidx.core.content.ContextCompat.checkSelfPermission(app, android.Manifest.permission.ACCESS_FINE_LOCATION)
+            != android.content.pm.PackageManager.PERMISSION_GRANTED) return
+        val lm = app.getSystemService(android.location.LocationManager::class.java) ?: return
+        val listener = android.location.LocationListener { loc -> pilotLat = loc.latitude; pilotLon = loc.longitude }
+        viewModelScope.launch(Dispatchers.Main) {
+            runCatching {
+                for (p in listOf(android.location.LocationManager.GPS_PROVIDER, android.location.LocationManager.NETWORK_PROVIDER)) {
+                    if (lm.isProviderEnabled(p)) {
+                        @Suppress("MissingPermission")
+                        lm.getLastKnownLocation(p)?.let { pilotLat = it.latitude; pilotLon = it.longitude }
+                        @Suppress("MissingPermission")
+                        lm.requestLocationUpdates(p, 2000L, 1f, listener)
+                    }
+                }
+                pilotListening = true
+            }
+        }
+    }
 
     /** Casque relié (ou non) en audio : la conversation passe par lui. */
     private fun headsetAudio(n: Int) {
@@ -765,6 +795,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         val tel = org.json.JSONObject()
         runCatching { d?.telemetry() }.getOrNull()?.forEach { (k, v) -> tel.put(k, clean(v)) }
+        if (!pilotLat.isNaN()) tel.put("pilotLat", pilotLat).put("pilotLon", pilotLon)
         val plan = s.plan?.let { p ->
             org.json.JSONObject()
                 .put("goal", p.goal)

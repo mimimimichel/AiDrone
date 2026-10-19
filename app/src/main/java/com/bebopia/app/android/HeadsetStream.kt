@@ -36,6 +36,8 @@ class HeadsetStream(
     private val onMic: (ByteArray) -> Unit = {},
     /** Nombre de casques reliés en audio (0 = la voix repasse par le téléphone). */
     private val onAudioClients: (Int) -> Unit = {},
+    /** Tuile de carte (z, x, y) en JPEG, téléchargée par le téléphone (null si indisponible). */
+    private val onTile: (Int, Int, Int) -> ByteArray? = { _, _, _ -> null },
 ) {
     companion object {
         private const val TAG = "HeadsetStream"
@@ -197,6 +199,13 @@ class HeadsetStream(
                 val y = q["y"]?.toDoubleOrNull()
                 if (p != null && y != null) onHead(p, y, q["f"] == "1", q["c"] == "1")
                 send(out, "application/json; charset=utf-8", state().toByteArray())
+            }
+            path.startsWith("/tile") -> {
+                val q = query(path)
+                val z = q["z"]?.toIntOrNull(); val x = q["x"]?.toIntOrNull(); val y = q["y"]?.toIntOrNull()
+                val img = if (z != null && x != null && y != null) runCatching { onTile(z, x, y) }.getOrNull() else null
+                if (img == null) send(out, "text/plain", "pas de tuile".toByteArray(), "404 Not Found")
+                else send(out, "image/jpeg", img)
             }
             path.startsWith("/frame") -> {
                 pollAt = System.currentTimeMillis()
@@ -495,10 +504,7 @@ function drawLeft(s,tel){
   t(tel.lowBattery?'Seuil d\'alerte atteint':'',x+18,VY+178,20,RED);
   // Navigation
   const ny=VY+202;panel(x,ny,w,270,'NAVIGATION');
-  const hx=x+90,hy=ny+150,rel=norm(num(tel.homeBearing,0)-num(tel.heading,0));
-  g.strokeStyle=CYAN;g.lineWidth=3;g.beginPath();g.arc(hx,hy,62,0,Math.PI*2);g.stroke();
-  t('N',hx,hy-70,16,GREY,'center');
-  g.save();g.translate(hx,hy);g.rotate(rel*Math.PI/180);g.fillStyle=CYAN;g.beginPath();g.moveTo(0,-52);g.lineTo(-18,18);g.lineTo(0,6);g.lineTo(18,18);g.closePath();g.fill();g.restore();
+  drawMap(g,x+90,ny+140,72,tel);
   const hd=num(tel.homeDist,num(s.dist,0));
   t('Départ',x+172,ny+90,20,GREY);
   t(f1(hd)+' m',x+172,ny+130,34,CYAN,'left',true);
@@ -545,6 +551,53 @@ function drawRight(s){
     y=wrap(who[0]+l.t,x+18,y,w-36,23,3,18,who[1])+4;}
 }
 
+// ======================= Mini-carte satellite (position GPS) =======================
+const tiles=new Map();
+function tile(z,x,y){const k=z+'/'+x+'/'+y;let im=tiles.get(k);
+  if(!im){im=new Image();im.onload=()=>{dirty=true};im.src='/tile?z='+z+'&x='+x+'&y='+y;tiles.set(k,im);
+    if(tiles.size>400)tiles.delete(tiles.keys().next().value);}
+  return (im.complete&&im.naturalWidth)?im:null;}
+function proj(lat,lon,z){const n=Math.pow(2,z)*256,r=lat*Math.PI/180;
+  return [(lon+180)/360*n,(1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*n];}
+// Carte ronde centrée sur le drone, orientée dans sa direction (le haut = devant le drone).
+function drawMap(c,cx,cy,R,tel){
+  c.save();c.beginPath();c.arc(cx,cy,R,0,Math.PI*2);c.closePath();
+  c.fillStyle='rgba(10,20,15,.85)';c.fill();c.clip();
+  const lat=tel.lat,lon=tel.lon;
+  if(typeof lat!=='number'||typeof lon!=='number'){
+    c.font='bold 22px sans-serif';c.textAlign='center';c.fillStyle=GREY;c.fillText('PAS DE GPS',cx,cy+8);c.restore();
+    c.strokeStyle=CYAN;c.lineWidth=3;c.beginPath();c.arc(cx,cy,R,0,Math.PI*2);c.stroke();return;}
+  // Zoom : le point de départ et le pilote restent visibles
+  let far=20;
+  for(const [a,b] of [[tel.homeLat,tel.homeLon],[tel.pilotLat,tel.pilotLon]]){
+    if(typeof a==='number'&&typeof b==='number'){const dy=(a-lat)*111320,dx=(b-lon)*111320*Math.cos(lat*Math.PI/180);far=Math.max(far,Math.hypot(dx,dy));}}
+  let z=19;const mpp=zz=>156543.03*Math.cos(lat*Math.PI/180)/Math.pow(2,zz);
+  while(z>12&&far/mpp(z)>R*0.8)z--;
+  const [px,py]=proj(lat,lon,z), hd=(typeof tel.heading==='number'?tel.heading:0)*Math.PI/180;
+  c.translate(cx,cy);c.rotate(-hd);
+  const span=R*1.5;
+  for(let tx=Math.floor((px-span)/256);tx<=Math.floor((px+span)/256);tx++)
+    for(let ty=Math.floor((py-span)/256);ty<=Math.floor((py+span)/256);ty++){
+      const im=tile(z,tx,ty);if(im)c.drawImage(im,tx*256-px,ty*256-py,256,256);}
+  function mark(a,b,color,label){if(typeof a!=='number'||typeof b!=='number')return;const [x,y]=proj(a,b,z);
+    c.save();c.translate(x-px,y-py);c.rotate(hd);c.fillStyle=color;c.strokeStyle='#000';c.lineWidth=3;
+    c.beginPath();c.arc(0,0,label?13:8,0,Math.PI*2);c.fill();c.stroke();
+    if(label){c.fillStyle='#000';c.font='bold 16px sans-serif';c.textAlign='center';c.fillText(label,0,6);}c.restore();}
+  mark(tel.homeLat,tel.homeLon,CYAN,'H');
+  mark(tel.pilotLat,tel.pilotLon,'#448AFF','');
+  // Nord sur le bord
+  c.save();c.rotate(0);c.fillStyle='#fff';c.font='bold 20px sans-serif';c.textAlign='center';c.strokeStyle='#000';c.lineWidth=4;
+  c.strokeText('N',0,-R+24);c.fillText('N',0,-R+24);c.restore();
+  c.restore();
+  // Drone au centre, pointe vers le haut (= sa direction)
+  c.fillStyle=WARN;c.strokeStyle='#000';c.lineWidth=3;c.beginPath();c.moveTo(cx,cy-18);c.lineTo(cx-12,cy+12);c.lineTo(cx,cy+5);c.lineTo(cx+12,cy+12);c.closePath();c.fill();c.stroke();
+  c.strokeStyle=CYAN;c.lineWidth=3;c.beginPath();c.arc(cx,cy,R,0,Math.PI*2);c.stroke();
+  // Échelle et crédit des images
+  c.font='bold 16px sans-serif';c.textAlign='center';c.fillStyle='#fff';c.strokeStyle='#000';c.lineWidth=4;
+  const scale='rayon '+Math.round(mpp(z)*R)+' m';c.strokeText(scale,cx,cy+R-14);c.fillText(scale,cx,cy+R-14);
+  c.font='11px sans-serif';c.fillStyle=GREY;c.fillText('Imagerie © Esri',cx,cy+R+16);
+}
+
 // ======================= VR : la caméra en grand, infos discrètes dans les coins (style lunettes FPV) =======================
 const V=document.createElement('canvas');V.width=1920;V.height=1080;
 function drawOSD(){
@@ -578,11 +631,9 @@ function drawOSD(){
   tx(f1(tel.hSpeed)+' m/s',120,cy+12,40,HUD,'left',true);tx('VIT',120,cy-36,22,GREY,'left',true);
   tx(f1(s.alt)+' m',w-120,cy+12,44,num(s.alt,0)>num(s.ceiling,99)-0.3?RED:HUD,'right',true);tx('ALT  (max '+Math.round(num(s.ceiling,3))+')',w-120,cy-36,22,GREY,'right',true);
   const vs=num(tel.vSpeed,0);if(Math.abs(vs)>0.1)tx((vs>0?'▲ ':'▼ ')+f1(Math.abs(vs)),w-120,cy+60,28,WARN,'right',true);
-  // Bas gauche : retour au départ
-  const rel=norm(num(tel.homeBearing,0)-hd), hx=110, hy=h-150;
-  o.strokeStyle=CYAN;o.lineWidth=3;o.beginPath();o.arc(hx,hy,48,0,Math.PI*2);o.stroke();
-  o.save();o.translate(hx,hy);o.rotate(rel*Math.PI/180);o.fillStyle=CYAN;o.beginPath();o.moveTo(0,-40);o.lineTo(-14,14);o.lineTo(0,4);o.lineTo(14,14);o.closePath();o.fill();o.restore();
-  tx(f1(num(tel.homeDist,num(s.dist,0)))+' m',180,hy+14,38,CYAN,'left',true);
+  // Bas gauche : mini-carte et distance du départ
+  drawMap(o,200,h-230,150,tel);
+  tx('H '+f1(num(tel.homeDist,num(s.dist,0)))+' m',50,h-400,36,CYAN,'left',true);
   // Bas droite : nacelle, détecteur
   tx('🎥 '+Math.round(num(tel.gimbal,0))+'°',w-60,h-170,32,HUD,'right',true);
   if(s.guardWatching){const tc=num(s.ttc,null);tx('🛡 '+(tc===null||tc>9.9?'libre':f1(tc)+' s'),w-60,h-124,28,tc!==null&&tc<3?WARN:HUD,'right',true);}
