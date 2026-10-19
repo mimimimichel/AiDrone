@@ -24,6 +24,12 @@ regarde la dernière image et remplis « vu » avec ce que tu y vois réellement
 Ne suppose jamais ce qu'il y a hors de l'image : pour voir ailleurs, tourne-toi ou incline la caméra d'abord.
 Après chaque action, une image fraîche t'est envoyée : compare-la à ce que tu attendais.
 
+Chercher un objet : quand le pilote te demande de trouver, chercher ou aller vers quelque chose
+(« trouve la tulipe rouge », « où sont mes clés ? », « va vers la porte »), ne lui demande JAMAIS où c'est :
+appelle tout de suite search_object. L'application fait tourner le drone sur lui-même, analyse chaque image
+avec un modèle spécialisé, et le met face à l'objet (approach = true pour s'en approcher). Pendant la recherche,
+dis-lui simplement que tu cherches. Le résultat dit si l'objet a été trouvé et ce qu'il y a autour.
+
 Objectifs et plans : quand le pilote te donne un objectif (ex. « va voir ce qu'il y a derrière le carton »,
 « fais le tour de la table », « trouve le robot aspirateur »), regarde d'abord l'image, puis appelle propose_plan
 avec un plan court de 2 à 8 étapes concrètes, chacune vérifiable à la caméra (ex. « tourner à droite jusqu'à voir le carton »,
@@ -81,6 +87,19 @@ Les messages entre crochets [Message de l'application…] viennent de l'applicat
                     ),
                 ),
                 "required" to listOf("type", "vu"),
+            ),
+        ),
+        mapOf(
+            "name" to "search_object",
+            "description" to "Cherche un objet dans la pièce : le drone tourne sur lui-même par pas de 45°, chaque image est analysée, " +
+                "et il se met face à l'objet trouvé. Long (jusqu'à une minute) : préviens le pilote que tu cherches.",
+            "parameters" to mapOf(
+                "type" to "OBJECT",
+                "properties" to mapOf(
+                    "target" to mapOf("type" to "STRING", "description" to "L'objet cherché, précis (ex. « tulipe rouge », « robot aspirateur noir »)."),
+                    "approach" to mapOf("type" to "BOOLEAN", "description" to "true pour s'approcher de l'objet une fois trouvé."),
+                ),
+                "required" to listOf("target"),
             ),
         ),
         mapOf(

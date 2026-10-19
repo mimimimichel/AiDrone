@@ -10,6 +10,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.bebopia.app.android.BebopVideo
 import com.bebopia.app.android.GeminiLive
+import com.bebopia.app.android.GeminiVision
+import com.bebopia.app.core.ai.ObjectFinder
 import com.bebopia.app.android.LiveState
 import com.bebopia.app.android.VoiceState
 import com.bebopia.app.android.NetworkRouter
@@ -230,6 +232,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
+    private val vision = GeminiVision({ geminiKey }, router::openApi)
+
+    private fun attachFinder(d: DroneBase, a: Agent, eyes: Eyes, simulation: Boolean) {
+        a.finder = ObjectFinder(
+            d, eyes, vision,
+            hfovDeg = if (simulation) 65.0 else 75.0,
+            simulation = simulation,
+            shouldStop = { a.paused },
+            report = { a.addChat(Role.SYSTEM, it) },
+        )
+    }
+
     private fun startGuard(d: DroneBase, a: Agent, frames: GrayFrames) {
         guard?.stop()
         guard = ObstacleGuard(d, frames, enabled = { guardOn }, onObstacle = { ttc, moving ->
@@ -273,6 +287,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val a = makeAgent(d, TextureEyes({ textureView }, { v.hasRecentFrame }))
                 d.onLinkLost = { a.linkLost() }
                 startGuard(d, a, TextureGray({ textureView }, { v.hasRecentFrame }))
+                attachFinder(d, a, TextureEyes({ textureView }, { v.hasRecentFrame }), simulation = false)
                 drone = d
                 video = v
                 agent = a
@@ -300,6 +315,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val a = makeAgent(d, PreviewEyes { previewView })
             CrashReport.mark("simulation : agent créé")
             startGuard(d, a, PreviewGray { previewView })
+            attachFinder(d, a, PreviewEyes { previewView }, simulation = true)
             CrashReport.mark("simulation : détecteur lancé")
             drone = d
             agent = a
@@ -412,6 +428,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         "validation_par_le_pilote" to a.confirm,
                         "batterie_pourcent" to d.battery(),
                         "plan" to (a.planText() ?: "aucun"),
+                    )
+                    "search_object" -> mapOf(
+                        "result" to a.aiAction(mapOf(
+                            "type" to "search",
+                            "target" to (args["target"] as? String ?: ""),
+                            "approach" to (args["approach"] == true),
+                        )),
+                        "etat" to d.state(),
                     )
                     "propose_plan" -> mapOf("result" to a.proposePlan(
                         args["goal"] as? String ?: "",

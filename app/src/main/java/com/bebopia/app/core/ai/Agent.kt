@@ -35,9 +35,9 @@ class Agent(
 ) {
     companion object {
         /** Actions soumises à ton accord en mode validation (atterrir n'en a jamais besoin). */
-        val NEEDS_CONFIRM = setOf("takeoff", "move", "return_home", "tilt_camera")
+        val NEEDS_CONFIRM = setOf("takeoff", "move", "return_home", "tilt_camera", "search")
         /** Actions refusées s'il n'y a pas d'image. */
-        val NEEDS_IMAGE = setOf("takeoff", "move", "return_home")
+        val NEEDS_IMAGE = setOf("takeoff", "move", "return_home", "search")
 
         val STOP_WORDS = setOf("stop", "stoppe", "arrete", "arretes", "arretez", "pause", "halte", "stopper")
         val LAND_PHRASES = listOf("atterri", "pose toi", "pose-toi", "pose le drone")
@@ -69,6 +69,7 @@ class Agent(
             }
             "tilt_camera" -> "caméra à %.0f°".format(num(action, "degrees"))
             "takeoff" -> "décollage"
+            "search" -> "chercher « ${action["target"] ?: "?"} »" + if (action["approach"] == true) " et m'en approcher" else ""
             "return_home" -> "retour au départ"
             else -> t ?: "?"
         }
@@ -89,6 +90,9 @@ class Agent(
 
     /** Appelé à chaque changement notable (pour rafraîchir l'interface). */
     var onChange: (() -> Unit)? = null
+
+    /** Recherche active d'un objet (null sans clé Gemini). */
+    var finder: ObjectFinder? = null
 
     /** Conversation en direct : où envoyer les messages écrits du pilote. */
     var forward: ((String) -> Unit)? = null
@@ -605,6 +609,8 @@ class Agent(
                 "tilt_camera" -> drone.tiltCamera(num(action, "degrees"))
                 "hover" -> drone.hover(num(action, "seconds", 1.0))
                 "return_home" -> drone.returnHome()
+                "search" -> finder?.search(action["target"]?.toString() ?: "", action["approach"] == true)
+                    ?: "refusé : la recherche d'objet a besoin d'une clé Gemini"
                 "done" -> {
                     idle = true
                     "mission terminée, j'attends tes instructions"

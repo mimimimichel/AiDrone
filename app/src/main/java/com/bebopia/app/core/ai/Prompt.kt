@@ -33,6 +33,9 @@ Actions possibles (champ "action") :
 - {"type": "tilt_camera", "degrees": -30}   (de -80 = vers le bas à 15 = vers le haut)
 - {"type": "hover", "seconds": 2}
 - {"type": "return_home"}
+- {"type": "search", "target": "tulipe rouge", "approach": false}   (recherche automatique : le drone tourne sur lui-même,
+  analyse chaque image et se met face à l'objet ; approach=true pour s'en approcher. À utiliser dès que le pilote
+  te demande de trouver ou chercher quelque chose, au lieu de lui demander où c'est)
 - {"type": "done"}   (mission terminée ou impossible : tu restes en stationnaire et attends)
 
 Ta façon de parler (champ "dire") :
