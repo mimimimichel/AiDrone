@@ -60,6 +60,12 @@ public class DjiLink {
     private volatile boolean motorsOn = false;
     private volatile boolean lowBattery = false;
     private volatile double heading = 0;
+    private volatile double attPitch = 0, attRoll = 0;
+    private volatile float vx = 0, vy = 0, vz = 0;
+    private volatile int flightTime = 0;
+    private volatile boolean homeSet = false;
+    private volatile double lat = Double.NaN, lon = Double.NaN, homeLat = Double.NaN, homeLon = Double.NaN;
+    private volatile float gimbalPitchDeg = 0;
     private volatile long lastFrameAt = 0L;
     private volatile DJICodecManager codec;
     private volatile VideoFeeder.VideoFeed listenedFeed;
@@ -85,6 +91,35 @@ public class DjiLink {
     public boolean flying() { return flying; }
     public boolean landingConfirmationNeeded() { return landingConfirmationNeeded; }
     public String flightMode() { return flightMode; }
+    /** Télémétrie pour le cockpit du casque. */
+    public java.util.Map<String, Object> telemetry() {
+        java.util.HashMap<String, Object> m = new java.util.HashMap<>();
+        m.put("heading", heading);
+        m.put("pitch", attPitch);
+        m.put("roll", attRoll);
+        m.put("hSpeed", Math.hypot(vx, vy));
+        m.put("vSpeed", -vz); // le kit DJI compte vers le bas
+        m.put("flightTime", flightTime);
+        m.put("gimbal", gimbalPitchDeg);
+        m.put("gps", gps);
+        m.put("sats", satellites);
+        m.put("flightMode", flightMode);
+        m.put("vps", vps);
+        m.put("imuPreheating", imuPreheating);
+        m.put("lowBattery", lowBattery);
+        // Distance et cap du point de départ par GPS, si le point de départ est enregistré
+        if (homeSet && !Double.isNaN(lat) && !Double.isNaN(homeLat) && satellites >= 6 && Math.abs(lat) > 0.0001) {
+            double r = 6371000, p1 = Math.toRadians(lat), p2 = Math.toRadians(homeLat);
+            double dp = p2 - p1, dl = Math.toRadians(homeLon - lon);
+            double h = Math.sin(dp / 2) * Math.sin(dp / 2) + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) * Math.sin(dl / 2);
+            m.put("homeDist", 2 * r * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h)));
+            double y = Math.sin(dl) * Math.cos(p2), x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+            m.put("homeBearing", Math.toDegrees(Math.atan2(y, x)));
+            m.put("homeSource", "GPS");
+        }
+        return m;
+    }
+
     /** Cap du drone (boussole), en degrés de -180 à 180. */
     public double heading() { return heading; }
 
@@ -247,7 +282,24 @@ public class DjiLink {
                     vps = s.isVisionPositioningSensorBeingUsed();
                     motorsOn = s.areMotorsOn();
                     lowBattery = s.isLowerThanBatteryWarningThreshold();
-                    if (s.getAttitude() != null) heading = s.getAttitude().yaw;
+                    if (s.getAttitude() != null) {
+                        heading = s.getAttitude().yaw;
+                        attPitch = s.getAttitude().pitch;
+                        attRoll = s.getAttitude().roll;
+                    }
+                    vx = s.getVelocityX(); vy = s.getVelocityY(); vz = s.getVelocityZ();
+                    flightTime = s.getFlightTimeInSeconds();
+                    homeSet = s.isHomeLocationSet();
+                    if (s.getAircraftLocation() != null) { lat = s.getAircraftLocation().getLatitude(); lon = s.getAircraftLocation().getLongitude(); }
+                    if (s.getHomeLocation() != null) { homeLat = s.getHomeLocation().getLatitude(); homeLon = s.getHomeLocation().getLongitude(); }
+                }
+            });
+        }
+        if (a.getGimbal() != null) {
+            a.getGimbal().setStateCallback(new dji.common.gimbal.GimbalState.Callback() {
+                @Override
+                public void onUpdate(dji.common.gimbal.GimbalState g) {
+                    if (g.getAttitudeInDegrees() != null) gimbalPitchDeg = g.getAttitudeInDegrees().getPitch();
                 }
             });
         }

@@ -68,6 +68,24 @@ abstract class DroneBase(val limits: Limits) {
      * follow : le drone tourne pour suivre la tête ; recenter : la direction actuelle devient « devant ».
      */
     open fun headLook(pitch: Double, yaw: Double, follow: Boolean, recenter: Boolean) {}
+
+    /**
+     * Télémétrie pour le cockpit du casque. Par défaut : estimation interne (odométrie).
+     * heading : cap (°) ; homeDist / homeBearing : distance (m) et cap absolu (°) du point de départ.
+     */
+    open fun telemetry(): Map<String, Any?> {
+        val toHome = Math.toDegrees(kotlin.math.atan2(-y, -x))
+        return mapOf(
+            "heading" to heading,
+            "alt" to altitude(),
+            "homeDist" to distanceFromHome(),
+            "homeBearing" to toHome,
+            "homeSource" to "estimation",
+            "gimbal" to cameraTilt.toDouble(),
+            "battery" to battery(),
+            "flying" to flying,
+        )
+    }
     protected open fun pause(seconds: Double) = Thread.sleep((seconds * 1000).toLong())
 
     fun takeoff(): String {

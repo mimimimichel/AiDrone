@@ -744,20 +744,63 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         else -> null
     }
 
-    /** Infos affichées dans le casque. */
+    /** État complet pour le cockpit du casque (JSON). */
     private fun headsetState(): String {
         val s = _state.value
-        val bat = s.battery?.let { "🔋 $it %" } ?: ""
-        val top = listOf(
-            when (s.mode) { Mode.BEBOP -> "Bebop"; Mode.MAVIC -> "Mavic"; Mode.SIM -> "Simulation"; else -> "Drone non connecté" },
-            bat,
-            if (s.mode == Mode.NONE) "" else "⬆ %.1f m".format(s.altitude),
-            if (s.mode == Mode.NONE) "" else s.droneState,
-            if (s.paused) "IA en pause" else "IA active",
-            s.plan?.let { p -> if (p.running) "Plan : ${p.goal}" else "" } ?: "",
-        ).filter { it.isNotBlank() }.joinToString("   ")
-        val say = s.chat.lastOrNull { it.role == Role.DRONE }?.text ?: ""
-        return org.json.JSONObject().put("top", top).put("say", say).put("obstacle", s.obstacle).toString()
+        val d = drone
+        fun clean(v: Any?): Any? = when (v) {
+            null -> org.json.JSONObject.NULL
+            is Double -> if (v.isNaN() || v.isInfinite()) org.json.JSONObject.NULL else v
+            is Float -> if (v.isNaN() || v.isInfinite()) org.json.JSONObject.NULL else v.toDouble()
+            else -> v
+        }
+        val tel = org.json.JSONObject()
+        runCatching { d?.telemetry() }.getOrNull()?.forEach { (k, v) -> tel.put(k, clean(v)) }
+        val plan = s.plan?.let { p ->
+            org.json.JSONObject()
+                .put("goal", p.goal)
+                .put("running", p.running)
+                .put("approved", p.approved)
+                .put("finished", p.finished)
+                .put("success", p.success)
+                .put("summary", p.summary)
+                .put("steps", org.json.JSONArray().apply {
+                    p.steps.forEach { st -> put(org.json.JSONObject().put("t", st.text).put("s", st.state.name).put("n", st.note)) }
+                })
+        }
+        val chat = org.json.JSONArray().apply {
+            s.chat.takeLast(6).forEach { line ->
+                put(org.json.JSONObject().put("r", when (line.role) { Role.PILOT -> "P"; Role.DRONE -> "D"; else -> "S" }).put("t", line.text))
+            }
+        }
+        return org.json.JSONObject()
+            .put("mode", s.mode.name)
+            .put("linkUp", s.linkUp)
+            .put("video", s.hasVideo)
+            .put("droneState", s.droneState)
+            .put("battery", clean(s.battery))
+            .put("alt", s.altitude)
+            .put("dist", s.distance)
+            .put("ceiling", s.ceiling)
+            .put("radius", s.radius)
+            .put("maxStep", s.maxStep)
+            .put("paused", s.paused)
+            .put("thinking", s.thinking)
+            .put("voice", s.voice)
+            .put("pending", clean(s.pending))
+            .put("steps", s.steps)
+            .put("maxSteps", s.maxSteps)
+            .put("guardOn", s.guardOn)
+            .put("guardWatching", s.guardWatching)
+            .put("ttc", clean(s.guardTtc))
+            .put("obstacle", s.obstacle)
+            .put("confirm", s.confirm)
+            .put("say", s.chat.lastOrNull { it.role == Role.DRONE }?.text ?: "")
+            .put("tel", tel)
+            .put("plan", plan ?: org.json.JSONObject.NULL)
+            .put("chat", chat)
+            .put("top", listOf(s.mode.name, s.battery?.let { "$it %" } ?: "").joinToString(" "))
+            .toString()
     }
 
     fun saveSettings(

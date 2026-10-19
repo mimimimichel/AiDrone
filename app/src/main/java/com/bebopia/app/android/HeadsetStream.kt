@@ -334,56 +334,293 @@ class HeadsetStream(
 <!doctype html>
 <html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Bebop IA – vue du drone</title>
+<title>Bebop IA – cockpit</title>
 <style>
-  html,body{margin:0;height:100%;background:#000;color:#fff;font-family:system-ui,sans-serif;overflow:hidden}
-  #v{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
-  .bar{position:absolute;left:0;right:0;padding:10px 16px;background:linear-gradient(#000c,#0000);font-size:20px}
-  #top{top:0}
-  #say{position:absolute;left:5%;right:5%;bottom:90px;text-align:center;font-size:24px;text-shadow:0 2px 6px #000}
-  #alert{position:absolute;top:45%;left:0;right:0;text-align:center;font-size:40px;font-weight:bold;display:none}
-  #alert span{background:#d32f2f;padding:10px 24px;border-radius:12px}
-  #btns{position:absolute;right:16px;bottom:16px;display:flex;gap:10px;align-items:center}
-  button{font-size:20px;padding:12px 18px;border-radius:10px;border:0;background:#4fc3f7;color:#000}
+  html,body{margin:0;height:100%;background:#050a08;color:#fff;font-family:system-ui,sans-serif;overflow:hidden}
+  #cockpit{display:block;margin:0 auto;max-width:100%;max-height:calc(100% - 64px);width:100%;height:auto;aspect-ratio:2/1}
+  #btns{position:absolute;right:12px;bottom:12px;display:flex;gap:10px;align-items:center}
+  button{font-size:18px;padding:10px 16px;border-radius:10px;border:0;background:#4fc3f7;color:#000}
   #vr{background:#66bb6a;font-weight:bold}
-  #note{font-size:15px;max-width:520px;text-align:right;color:#cfd8dc}
-  canvas{display:none}
+  #note{font-size:14px;max-width:480px;text-align:right;color:#cfd8dc}
+  #gl{display:none}
 </style></head><body>
-<img id="v" src="/stream" alt="vidéo du drone">
-<div class="bar" id="top">chargement…</div>
-<div id="alert"><span>⚠ OBSTACLE</span></div>
-<div id="say"></div>
+<canvas id="cockpit" width="2048" height="1024"></canvas>
 <div id="btns"><span id="note"></span>
   <button onclick="document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen()">Plein écran</button>
   <button id="talk">🎙 Parler à l'IA ici</button>
   <button id="vr" style="display:none">🥽 Entrer en VR</button></div>
 <canvas id="gl"></canvas>
 <script>
-const v=document.getElementById('v');
-v.onerror=()=>setTimeout(()=>{v.src='/stream?'+Date.now()},1000);
-let state={};
-function show(s){state=s;
-  document.getElementById('top').textContent=s.top||'';
-  document.getElementById('say').textContent=s.say||'';
-  document.getElementById('alert').style.display=s.obstacle?'block':'none';}
-let inVR=false;
-async function poll(){
-  if(!inVR){try{show(await (await fetch('/state',{cache:'no-store'})).json())}catch(e){document.getElementById('top').textContent='téléphone injoignable…'}}
-  setTimeout(poll,500);
-}
-poll();
+// ======================= Cockpit (dessiné sur une image 2048 x 1024) =======================
+const C=document.getElementById('cockpit'), g=C.getContext('2d');
+const W=2048, H=1024, VX=384, VY=150, VW=1280, VH=720;
+const HUD='#7CFC9A', WARN='#FFC107', RED='#FF5252', CYAN='#4FC3F7', GREY='#9fb3a8', DIM='rgba(6,18,12,.80)';
+let state={}, frame=null, follow=true, inVR=false, audioOn=false, dirty=true;
 
-// ---------- Réalité virtuelle : la vidéo suit le regard, la nacelle suit la tête ----------
+function rr(x,y,w,h,r){g.beginPath();g.moveTo(x+r,y);g.arcTo(x+w,y,x+w,y+h,r);g.arcTo(x+w,y+h,x,y+h,r);g.arcTo(x,y+h,x,y,r);g.arcTo(x,y,x+w,y,r);g.closePath();}
+function panel(x,y,w,h,title){g.fillStyle=DIM;rr(x,y,w,h,14);g.fill();g.strokeStyle='rgba(124,252,154,.35)';g.lineWidth=2;rr(x,y,w,h,14);g.stroke();
+  if(title){g.fillStyle=HUD;g.font='bold 22px sans-serif';g.textAlign='left';g.fillText(title,x+16,y+32);}}
+function t(s,x,y,size,color,align,bold){g.font=(bold?'bold ':'')+size+'px sans-serif';g.fillStyle=color||'#fff';g.textAlign=align||'left';g.fillText(s,x,y);}
+function wrap(s,x,y,maxW,lh,maxLines,size,color){g.font=size+'px sans-serif';g.fillStyle=color;g.textAlign='left';
+  const words=String(s).split(' ');let line='',n=0;
+  for(const w of words){const test=line?line+' '+w:w;if(g.measureText(test).width>maxW&&line){g.fillText(line,x,y);y+=lh;line=w;if(++n>=maxLines-1){line=line+' …';break;}}else line=test;}
+  if(line){g.fillText(line,x,y);y+=lh;}return y;}
+function num(v,d){return (typeof v==='number'&&isFinite(v))?v:d;}
+function f1(v){return num(v,0).toFixed(1).replace('.',',');}
+function norm(a){return ((a%360)+540)%360-180;}
+function card(h){const n=['N','NE','E','SE','S','SO','O','NO'];return n[Math.round((((h%360)+360)%360)/45)%8];}
+function mmss(s){s=Math.max(0,Math.round(num(s,0)));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');}
+
+function draw(){
+  const s=state, tel=s.tel||{};
+  g.fillStyle='#050a08';g.fillRect(0,0,W,H);
+  // ---- bandeau haut ----
+  panel(8,8,W-16,128);
+  t('BEBOP IA',28,52,30,HUD,'left',true);
+  t({BEBOP:'Bebop 2',MAVIC:'Mavic Mini',SIM:'Simulation',CONNECTING:'Connexion…',NONE:'Aucun drone'}[s.mode]||'—',28,92,24,'#fff');
+  t((s.droneState||'')+(tel.flightMode?'  ·  '+tel.flightMode:''),28,122,20,GREY);
+  const now=new Date();
+  t(now.toLocaleTimeString('fr-FR'),W/2,62,40,'#fff','center',true);
+  t('vol '+mmss(tel.flightTime),W/2,102,24,GREY,'center');
+  const warns=[];
+  if(s.mode&&s.mode!=='NONE'&&s.linkUp===false)warns.push([RED,'LIAISON PERDUE']);
+  if(s.obstacle)warns.push([RED,'OBSTACLE']);
+  if(num(s.battery,100)<30)warns.push([RED,'BATTERIE FAIBLE']);
+  if(s.video===false&&s.mode!=='NONE')warns.push([WARN,'PAS DE VIDÉO']);
+  if(tel.imuPreheating)warns.push([WARN,'PRÉCHAUFFAGE']);
+  if(s.paused)warns.push([WARN,'IA EN PAUSE']);
+  let wx=W-28;
+  for(const [c,w] of warns.slice(0,4).reverse()){g.font='bold 22px sans-serif';const ww=g.measureText(w).width+28;wx-=ww;
+    g.fillStyle=c;rr(wx,40,ww,44,8);g.fill();t(w,wx+ww/2,70,22,'#000','center',true);wx-=10;}
+  if(!warns.length)t('SYSTÈMES OK',W-28,72,24,HUD,'right',true);
+
+  // ---- vidéo ----
+  g.save();rr(VX,VY,VW,VH,10);g.clip();
+  g.fillStyle='#000';g.fillRect(VX,VY,VW,VH);
+  if(frame)g.drawImage(frame,VX,VY,VW,VH);else t('PAS DE VIDÉO',VX+VW/2,VY+VH/2,40,GREY,'center',true);
+  drawHUD(s,tel);
+  g.restore();
+  g.strokeStyle='rgba(124,252,154,.5)';g.lineWidth=3;rr(VX,VY,VW,VH,10);g.stroke();
+
+  drawLeft(s,tel);drawRight(s);
+  // ---- bandeau bas ----
+  panel(8,H-132,W-16,124);
+  t('🥽 Tête → nacelle',28,H-86,24,HUD,'left',true);
+  t('↻ Rotation du drone : '+(follow?'MARCHE':'ARRÊT'),28,H-46,24,follow?HUD:GREY,'left',true);
+  t('Grip : rotation marche/arrêt   ·   Gâchette : recentrer',W/2,H-86,22,'#fff','center');
+  t('Dis « stop » ou « atterris » à tout moment',W/2,H-46,22,WARN,'center');
+  t(audioOn?'🎙 Audio dans le casque':'🎙 Audio sur le téléphone',W-28,H-86,22,audioOn?HUD:GREY,'right',true);
+  t((s.voice||'').replace(/^[^ ]+ /,'')||'Conversation fermée',W-28,H-46,22,GREY,'right');
+}
+
+function drawHUD(s,tel){
+  const cx=VX+VW/2, cy=VY+VH/2, ppd=VH/40;
+  // Horizon artificiel (assiette du drone)
+  const pitch=num(tel.pitch,0), roll=num(tel.roll,0);
+  g.save();g.translate(cx,cy);g.rotate(-roll*Math.PI/180);
+  g.strokeStyle=HUD;g.fillStyle=HUD;g.lineWidth=3;g.font='18px sans-serif';
+  g.beginPath();g.moveTo(-560,pitch*ppd);g.lineTo(-120,pitch*ppd);g.moveTo(120,pitch*ppd);g.lineTo(560,pitch*ppd);g.stroke();
+  for(let a=-30;a<=30;a+=5){if(a===0)continue;const y=(pitch-a)*ppd;if(Math.abs(y)>VH/2-40)continue;
+    g.setLineDash(a<0?[10,8]:[]);g.lineWidth=2;g.beginPath();g.moveTo(-90,y);g.lineTo(-40,y);g.moveTo(40,y);g.lineTo(90,y);g.stroke();
+    g.setLineDash([]);g.textAlign='right';g.fillText(String(a),-98,y+6);g.textAlign='left';g.fillText(String(a),98,y+6);}
+  g.restore();
+  // Réticule fixe
+  g.strokeStyle=WARN;g.lineWidth=4;g.beginPath();g.moveTo(cx-70,cy);g.lineTo(cx-25,cy);g.lineTo(cx-12,cy+14);g.lineTo(cx,cy);g.lineTo(cx+12,cy+14);g.lineTo(cx+25,cy);g.lineTo(cx+70,cy);g.stroke();
+  // Indicateur de roulis
+  g.save();g.translate(cx,cy);g.strokeStyle=HUD;g.lineWidth=2;
+  g.beginPath();g.arc(0,0,300,-Math.PI/2-0.6,-Math.PI/2+0.6);g.stroke();
+  for(const a of [-30,-20,-10,0,10,20,30]){g.save();g.rotate(a*Math.PI/180);g.beginPath();g.moveTo(0,-300);g.lineTo(0,a===0?-325:-314);g.stroke();g.restore();}
+  g.rotate(-roll*Math.PI/180);g.fillStyle=HUD;g.beginPath();g.moveTo(0,-296);g.lineTo(-10,-278);g.lineTo(10,-278);g.closePath();g.fill();g.restore();
+
+  // Cap (boussole) en haut, avec le point de départ
+  const hd=num(tel.heading,0), tw=760, tx=cx-tw/2, ty=VY+14, ppx=tw/90;
+  g.fillStyle='rgba(0,0,0,.45)';g.fillRect(tx,ty,tw,58);
+  g.strokeStyle=HUD;g.fillStyle=HUD;g.lineWidth=2;
+  for(let a=Math.ceil((hd-45)/5)*5;a<=hd+45;a+=5){const x=cx+(a-hd)*ppx;g.beginPath();g.moveTo(x,ty+58);g.lineTo(x,ty+(a%15===0?36:46));g.stroke();
+    if(a%15===0){const n=((a%360)+360)%360;t(n%45===0?card(n):String(n),x,ty+30,20,HUD,'center',n%45===0);}}
+  if(typeof tel.homeBearing==='number'){const rel=norm(tel.homeBearing-hd);const x=cx+Math.max(-45,Math.min(45,rel))*ppx;
+    g.fillStyle=CYAN;g.beginPath();g.moveTo(x,ty+58);g.lineTo(x-12,ty+78);g.lineTo(x+12,ty+78);g.closePath();g.fill();t('H',x,ty+100,20,CYAN,'center',true);}
+  g.fillStyle='#000';rr(cx-52,ty+60,104,40,6);g.fill();g.strokeStyle=HUD;rr(cx-52,ty+60,104,40,6);g.stroke();
+  t(String(Math.round(((hd%360)+360)%360)).padStart(3,'0')+'°',cx,ty+90,26,HUD,'center',true);
+
+  // Vitesse (gauche) et altitude (droite)
+  tape(VX+24,cy,num(tel.hSpeed,0),'m/s',1,40,'VIT',false,null);
+  tape(VX+VW-24,cy,num(s.alt,0),'m',1,40,'ALT',true,num(s.ceiling,null));
+  const vs=num(tel.vSpeed,0);
+  t((vs>=0?'▲ ':'▼ ')+f1(Math.abs(vs))+' m/s',VX+VW-24,cy+230,22,Math.abs(vs)>0.2?WARN:GREY,'right',true);
+
+  // Nacelle
+  const gp=num(tel.gimbal,0), gx=VX+VW-230, gy=VY+VH-250;
+  g.strokeStyle=HUD;g.lineWidth=3;g.beginPath();g.arc(gx,gy,70,0,Math.PI/2);g.stroke();
+  const ga=Math.min(90,Math.max(0,-gp))*Math.PI/180;
+  g.strokeStyle=WARN;g.lineWidth=5;g.beginPath();g.moveTo(gx,gy);g.lineTo(gx+70*Math.cos(ga),gy+70*Math.sin(ga));g.stroke();
+  t('NACELLE '+Math.round(gp)+'°',gx+35,gy-14,20,HUD,'center',true);
+
+  // Détecteur d'obstacles
+  if(s.guardWatching){const tc=num(s.ttc,null);t('🛡 '+(tc===null||tc>9.9?'rien n\'approche':'contact '+f1(tc)+' s'),cx,cy+70,24,tc!==null&&tc<3?WARN:HUD,'center',true);}
+  if(s.obstacle){g.fillStyle='rgba(211,47,47,.9)';rr(cx-260,cy-130,520,90,14);g.fill();t('⚠ OBSTACLE : ARRÊT',cx,cy-72,44,'#fff','center',true);}
+  // Proposition à valider
+  let by=VY+VH-24;
+  if(s.pending){g.fillStyle='rgba(255,193,7,.92)';rr(cx-460,by-62,920,62,12);g.fill();t('L\'IA PROPOSE : '+s.pending+'  —  dis OUI ou NON',cx,by-20,26,'#000','center',true);by-=76;}
+  // Sous-titres de l'IA
+  if(s.say){g.font='28px sans-serif';const lines=[];let line='';for(const w of s.say.split(' ')){const tt=line?line+' '+w:w;if(g.measureText(tt).width>1000&&line){lines.push(line);line=w;}else line=tt;}if(line)lines.push(line);
+    const show=lines.slice(-2);for(let i=show.length-1;i>=0;i--){g.lineWidth=7;g.strokeStyle='#000';g.textAlign='center';g.strokeText(show[i],cx,by-8);g.fillStyle='#fff';g.fillText(show[i],cx,by-8);by-=38;}}
+}
+
+function tape(x,cy,val,unit,step,ppu,label,right,limit){
+  const h=440, top=cy-h/2, w=110, x0=right?x-w:x;
+  g.fillStyle='rgba(0,0,0,.45)';g.fillRect(x0,top,w,h);
+  g.strokeStyle=HUD;g.lineWidth=2;g.fillStyle=HUD;
+  for(let v=Math.floor((val-h/2/ppu)/step)*step;v<=val+h/2/ppu;v+=step){const y=cy-(v-val)*ppu;if(y<top+6||y>top+h-6)continue;
+    const xe=right?x0:x0+w;g.beginPath();g.moveTo(xe,y);g.lineTo(right?xe+16:xe-16,y);g.stroke();
+    t(String(Math.round(v*10)/10).replace('.',','),right?x0+w-8:x0+8,y+7,18,HUD,right?'right':'left');}
+  if(limit!==null&&limit!==undefined){const y=cy-(limit-val)*ppu;if(y>top&&y<top+h){g.strokeStyle=RED;g.lineWidth=4;g.beginPath();g.moveTo(x0,y);g.lineTo(x0+w,y);g.stroke();t('PLAFOND',x0+w/2,y-8,16,RED,'center',true);}}
+  g.fillStyle='#000';rr(x0-6,cy-24,w+12,48,6);g.fill();g.strokeStyle=HUD;g.lineWidth=2;rr(x0-6,cy-24,w+12,48,6);g.stroke();
+  t(f1(val),x0+w/2,cy+10,28,HUD,'center',true);
+  t(label+' ('+unit+')',x0+w/2,top-10,18,GREY,'center',true);
+}
+
+function drawLeft(s,tel){
+  const x=8,w=VX-20;
+  // Énergie
+  panel(x,VY,w,190,'ÉNERGIE');
+  const b=num(s.battery,null);const bc=b===null?GREY:b<30?RED:b<50?WARN:HUD;
+  g.strokeStyle=bc;g.lineWidth=3;rr(x+18,VY+52,w-90,56,8);g.stroke();
+  if(b!==null){g.fillStyle=bc;rr(x+24,VY+58,(w-102)*b/100,44,5);g.fill();}
+  g.fillStyle=bc;g.fillRect(x+w-68,VY+68,10,24);
+  t(b===null?'—':b+' %',x+w-48,VY+95,30,bc,'left',true);
+  t('Temps de vol : '+mmss(tel.flightTime),x+18,VY+150,24,'#fff');
+  t(tel.lowBattery?'Seuil d\'alerte atteint':'',x+18,VY+178,20,RED);
+  // Navigation
+  const ny=VY+202;panel(x,ny,w,270,'NAVIGATION');
+  const hx=x+90,hy=ny+150,rel=norm(num(tel.homeBearing,0)-num(tel.heading,0));
+  g.strokeStyle=CYAN;g.lineWidth=3;g.beginPath();g.arc(hx,hy,62,0,Math.PI*2);g.stroke();
+  t('N',hx,hy-70,16,GREY,'center');
+  g.save();g.translate(hx,hy);g.rotate(rel*Math.PI/180);g.fillStyle=CYAN;g.beginPath();g.moveTo(0,-52);g.lineTo(-18,18);g.lineTo(0,6);g.lineTo(18,18);g.closePath();g.fill();g.restore();
+  const hd=num(tel.homeDist,num(s.dist,0));
+  t('Départ',x+172,ny+90,20,GREY);
+  t(f1(hd)+' m',x+172,ny+130,34,CYAN,'left',true);
+  t(tel.homeSource==='GPS'?'par GPS':'estimé',x+172,ny+160,18,GREY);
+  const r=num(s.radius,15);g.fillStyle='rgba(255,255,255,.15)';g.fillRect(x+18,ny+222,w-36,14);
+  g.fillStyle=hd/r>0.8?RED:CYAN;g.fillRect(x+18,ny+222,(w-36)*Math.min(1,hd/r),14);
+  t('Rayon '+Math.round(r)+' m  ·  Plafond '+Math.round(num(s.ceiling,3))+' m',x+18,ny+258,18,GREY);
+  // Capteurs
+  const cy2=ny+282;panel(x,cy2,w,VY+VH-cy2,'CAPTEURS');
+  let ly=cy2+66;
+  function row(k,v,c){t(k,x+18,ly,20,GREY);t(v,x+w-18,ly,20,c||'#fff','right',true);ly+=34;}
+  row('GPS',(tel.gps||'—')+(typeof tel.sats==='number'?' · '+tel.sats+' sat':''),num(tel.sats,0)>=8?HUD:WARN);
+  row('Mode de vol',tel.flightMode||'—');
+  row('Capteurs dessous',tel.vps===undefined?'—':tel.vps?'actifs':'inactifs',tel.vps?HUD:WARN);
+  row('Détecteur obstacles',s.guardOn?(s.guardWatching?'surveille':'prêt'):'coupé',s.guardOn?HUD:WARN);
+  row('Vidéo',s.video?'reçue':'absente',s.video?HUD:RED);
+}
+
+function drawRight(s){
+  const x=VX+VW+12,w=W-x-8;
+  // IA
+  panel(x,VY,w,190,'INTELLIGENCE ARTIFICIELLE');
+  const st=s.paused?['PAUSE',WARN]:s.thinking?['RÉFLÉCHIT',CYAN]:['ACTIVE',HUD];
+  t(st[0],x+18,VY+86,40,st[1],'left',true);
+  t((s.voice||'Conversation fermée'),x+18,VY+124,20,'#fff');
+  t('Actions '+(s.steps||0)+' / '+(s.maxSteps||40)+'  ·  pas max '+f1(s.maxStep)+' m',x+18,VY+156,19,GREY);
+  t(s.confirm?'Validation de chaque déplacement':'Déplacements sans validation',x+18,VY+180,18,s.confirm?HUD:WARN);
+  // Plan
+  const py=VY+202;panel(x,py,w,290,'PLAN');
+  let y=py+64;
+  if(!s.plan){t('Aucun plan.',x+18,y,20,GREY);t('Donne un objectif à l\'IA.',x+18,y+30,20,GREY);}
+  else{const p=s.plan;
+    y=wrap((p.finished?(p.success?'✅ ':'❌ '):p.running?'▶ ':'📋 ')+p.goal,x+18,y,w-36,26,2,21,'#fff');
+    const icon={TODO:'⬜',DOING:'▶',DONE:'✅',FAILED:'❌',SKIPPED:'⏭'};
+    for(const [i,st2] of (p.steps||[]).entries()){if(y>py+280)break;
+      y=wrap(icon[st2.s]+' '+(i+1)+'. '+st2.t,x+18,y,w-36,24,2,18,st2.s==='DOING'?CYAN:st2.s==='DONE'?HUD:'#ddd');}
+    if(!p.approved&&!p.finished)t('Dis OUI pour lancer',x+18,py+278,18,WARN,'left',true);}
+  // Conversation
+  const cy3=py+302;panel(x,cy3,w,VY+VH-cy3,'CONVERSATION');
+  y=cy3+62;
+  const lines=(s.chat||[]).slice(-5);
+  for(const l of lines){if(y>VY+VH-14)break;
+    const who=l.r==='P'?['Toi : ',CYAN]:l.r==='D'?['IA : ',HUD]:['',GREY];
+    y=wrap(who[0]+l.t,x+18,y,w-36,23,3,18,who[1])+4;}
+}
+
+// ======================= Images et état =======================
+async function frameLoop(){
+  while(true){
+    try{const r=await fetch('/frame?'+Date.now(),{cache:'no-store'});
+      if(r.ok){const img=await createImageBitmap(await r.blob());if(frame&&frame.close)frame.close();frame=img;dirty=true;}}catch(e){}
+    await new Promise(r=>setTimeout(r,70));
+  }
+}
+async function statePoll(){
+  while(true){
+    if(!inVR){try{state=await (await fetch('/state',{cache:'no-store'})).json();dirty=true;}catch(e){state={};dirty=true;}}
+    await new Promise(r=>setTimeout(r,200));
+  }
+}
+function paint(){if(dirty){draw();dirty=false;}requestAnimationFrame(paint);}
+setInterval(()=>{dirty=true;},1000); // horloge
+frameLoop();statePoll();paint();
+
+// ======================= Réalité virtuelle =======================
 const note=document.getElementById('note'), vrBtn=document.getElementById('vr');
 if(!window.isSecureContext){
-  note.textContent='Pour la VR et le suivi de la tête : ouvre l\'adresse https://…:8443 (accepte l\'avertissement de sécurité).';
+  note.textContent='Pour la VR, le suivi de la tête et l\'audio : ouvre l\'adresse https://…:8443 (accepte l\'avertissement de sécurité).';
 }else if(navigator.xr){
   navigator.xr.isSessionSupported('immersive-vr').then(ok=>{if(ok)vrBtn.style.display='inline-block';else note.textContent='VR non disponible dans ce navigateur.'});
 }
 vrBtn.onclick=()=>{startAudio();startVR();};
 document.getElementById('talk').onclick=startAudio;
+let recenter=true, lastHead=0;
 
-// ---------- Audio : le micro du casque parle à l'IA, sa voix sort dans le casque ----------
+async function startVR(){
+  const canvas=document.getElementById('gl');
+  const gl=canvas.getContext('webgl',{xrCompatible:true});
+  const session=await navigator.xr.requestSession('immersive-vr',{optionalFeatures:['local']});
+  inVR=true;
+  await gl.makeXRCompatible();
+  session.updateRenderState({baseLayer:new XRWebGLLayer(session,gl)});
+  const ref=await session.requestReferenceSpace('local');
+  const vs='attribute vec3 p;attribute vec2 t;uniform mat4 P;varying vec2 u;void main(){u=t;gl_Position=P*vec4(p,1.0);}';
+  const fs='precision mediump float;varying vec2 u;uniform sampler2D s;void main(){gl_FragColor=texture2D(s,u);}';
+  function sh(type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);return s;}
+  const pr=gl.createProgram();gl.attachShader(pr,sh(gl.VERTEX_SHADER,vs));gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,fs));gl.linkProgram(pr);
+  // Écran du cockpit fixé devant les yeux (environ 80° de large)
+  const QW=1.95,QH=QW/2,Z=-2.3;
+  const buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-QW,-QH,Z,0,1, QW,-QH,Z,1,1, -QW,QH,Z,0,0, QW,QH,Z,1,0]),gl.STATIC_DRAW);
+  const tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  const aP=gl.getAttribLocation(pr,'p'),aT=gl.getAttribLocation(pr,'t'),uP=gl.getUniformLocation(pr,'P');
+  session.addEventListener('select',()=>{recenter=true;});
+  session.addEventListener('squeeze',()=>{follow=!follow;recenter=true;dirty=true;});
+  session.addEventListener('end',()=>{inVR=false;fetch('/head?p=0&y=0&f=0').catch(()=>{});});
+  let uploaded=false;
+  function onFrame(tm,fr){
+    session.requestAnimationFrame(onFrame);
+    const pose=fr.getViewerPose(ref);if(!pose)return;
+    const q=pose.transform.orientation;
+    const fx=-2*(q.x*q.z+q.w*q.y), fy=-2*(q.y*q.z-q.w*q.x), fz=-(1-2*(q.x*q.x+q.y*q.y));
+    const yaw=Math.atan2(fx,-fz)*180/Math.PI, pitch=Math.asin(Math.max(-1,Math.min(1,fy)))*180/Math.PI;
+    if(tm-lastHead>50){lastHead=tm;
+      fetch('/head?p='+pitch.toFixed(1)+'&y='+yaw.toFixed(1)+'&f='+(follow?1:0)+'&c='+(recenter?1:0),{cache:'no-store'})
+        .then(r=>r.json()).then(s=>{state=s;dirty=true;}).catch(()=>{});
+      recenter=false;}
+    if(dirty||!uploaded){draw();dirty=false;gl.bindTexture(gl.TEXTURE_2D,tex);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,C);gl.generateMipmap(gl.TEXTURE_2D);uploaded=true;}
+    const layer=session.renderState.baseLayer;
+    gl.bindFramebuffer(gl.FRAMEBUFFER,layer.framebuffer);
+    gl.clearColor(0,0,0,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+    gl.useProgram(pr);gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+    gl.enableVertexAttribArray(aP);gl.vertexAttribPointer(aP,3,gl.FLOAT,false,20,0);
+    gl.enableVertexAttribArray(aT);gl.vertexAttribPointer(aT,2,gl.FLOAT,false,20,12);
+    gl.bindTexture(gl.TEXTURE_2D,tex);
+    for(const view of pose.views){const vp=layer.getViewport(view);gl.viewport(vp.x,vp.y,vp.width,vp.height);
+      gl.uniformMatrix4fv(uP,false,view.projectionMatrix);gl.drawArrays(gl.TRIANGLE_STRIP,0,4);}
+  }
+  session.requestAnimationFrame(onFrame);
+}
+
+// ======================= Audio : micro du casque et voix de l'IA =======================
 const WORKLET="class MicPcm extends AudioWorkletProcessor{constructor(){super();this.b=new Int16Array(1600);this.n=0}"+
  "process(i){const c=i[0][0];if(c)for(let k=0;k<c.length;k++){const s=Math.max(-1,Math.min(1,c[k]));"+
  "this.b[this.n++]=s<0?s*0x8000:s*0x7fff;if(this.n===this.b.length){this.port.postMessage(this.b.buffer.slice(0));this.n=0}}return true}}"+
@@ -394,102 +631,28 @@ async function startAudio(){
   const talk=document.getElementById('talk');
   if(!window.isSecureContext||!navigator.mediaDevices){note.textContent='Pour l\'audio dans le casque, ouvre l\'adresse https://…:8443.';return;}
   try{
-    const ws=new WebSocket('wss://'+location.host+'/audio'); ws.binaryType='arraybuffer';
-    const out=new AudioContext({sampleRate:24000}); let next=0; const playing=new Set();
+    const ws=new WebSocket('wss://'+location.host+'/audio');ws.binaryType='arraybuffer';
+    const out=new AudioContext({sampleRate:24000});let next=0;const playing=new Set();
     ws.onmessage=e=>{
-      if(typeof e.data==='string'){ if(e.data==='flush'){playing.forEach(s=>{try{s.stop()}catch(_){}});playing.clear();next=0;} return; }
-      const pcm=new Int16Array(e.data); const buf=out.createBuffer(1,pcm.length,24000); const ch=buf.getChannelData(0);
+      if(typeof e.data==='string'){if(e.data==='flush'){playing.forEach(s=>{try{s.stop()}catch(_){}});playing.clear();next=0;}return;}
+      const pcm=new Int16Array(e.data);const buf=out.createBuffer(1,pcm.length,24000);const ch=buf.getChannelData(0);
       for(let i=0;i<pcm.length;i++)ch[i]=pcm[i]/32768;
-      const src=out.createBufferSource(); src.buffer=buf; src.connect(out.destination);
-      next=Math.max(next,out.currentTime+0.05); src.start(next); next+=buf.duration;
-      playing.add(src); src.onended=()=>playing.delete(src);
+      const src=out.createBufferSource();src.buffer=buf;src.connect(out.destination);
+      next=Math.max(next,out.currentTime+0.05);src.start(next);next+=buf.duration;
+      playing.add(src);src.onended=()=>playing.delete(src);
     };
     const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
     const mic=new AudioContext({sampleRate:16000});
     await mic.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET],{type:'application/javascript'})));
     const node=new AudioWorkletNode(mic,'mic-pcm');
-    node.port.onmessage=({data})=>{ if(ws.readyState===1) ws.send(data); };
+    node.port.onmessage=({data})=>{if(ws.readyState===1)ws.send(data);};
     mic.createMediaStreamSource(stream).connect(node);
-    out.resume(); mic.resume();
-    audio={ws,out,mic,stream};
-    talk.textContent='🎙 Conversation dans le casque'; talk.disabled=true;
-    ws.onclose=()=>{ stream.getTracks().forEach(t=>t.stop()); mic.close(); out.close(); audio=null;
-      talk.textContent='🎙 Parler à l\'IA ici'; talk.disabled=false; };
-  }catch(e){ note.textContent='Audio impossible : '+e.message; }
-}
-
-const comp=document.createElement('canvas'); comp.width=1280; comp.height=780;
-const cx=comp.getContext('2d');
-let frame=null, follow=true, recenter=true, lastHead=0, needUpload=true;
-
-async function frameLoop(){
-  while(inVR){
-    try{
-      const r=await fetch('/frame?'+Date.now(),{cache:'no-store'});
-      if(r.ok){const b=await r.blob(); const img=await createImageBitmap(b); if(frame&&frame.close)frame.close(); frame=img; needUpload=true;}
-    }catch(e){}
-    await new Promise(r=>setTimeout(r,70));
-  }
-}
-function compose(){
-  cx.fillStyle='#000'; cx.fillRect(0,0,1280,780);
-  if(frame) cx.drawImage(frame,0,30,1280,720);
-  cx.fillStyle='rgba(0,0,0,.6)'; cx.fillRect(0,0,1280,46);
-  cx.fillStyle='#fff'; cx.font='26px sans-serif'; cx.textAlign='left';
-  cx.fillText((state.top||'')+(follow?'   ↻ le drone suit la tête':''),14,32);
-  if(state.say){cx.font='30px sans-serif'; cx.textAlign='center'; cx.lineWidth=6; cx.strokeStyle='#000';
-    cx.strokeText(state.say.slice(0,90),640,730); cx.fillText(state.say.slice(0,90),640,730);}
-  if(state.obstacle){cx.fillStyle='#d32f2f'; cx.fillRect(390,340,500,80); cx.fillStyle='#fff'; cx.font='bold 48px sans-serif'; cx.textAlign='center'; cx.fillText('⚠ OBSTACLE',640,398);}
-}
-
-async function startVR(){
-  const canvas=document.getElementById('gl');
-  const gl=canvas.getContext('webgl',{xrCompatible:true});
-  const session=await navigator.xr.requestSession('immersive-vr',{optionalFeatures:['local']});
-  inVR=true; frameLoop();
-  await gl.makeXRCompatible();
-  session.updateRenderState({baseLayer:new XRWebGLLayer(session,gl)});
-  const ref=await session.requestReferenceSpace('local');
-  // Shader : un écran fixé devant les yeux (il suit le regard, comme une vue FPV)
-  const vs='attribute vec3 p;attribute vec2 t;uniform mat4 P;varying vec2 u;void main(){u=t;gl_Position=P*vec4(p,1.0);}';
-  const fs='precision mediump float;varying vec2 u;uniform sampler2D s;void main(){gl_FragColor=texture2D(s,u);}';
-  function sh(type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);return s;}
-  const pr=gl.createProgram();gl.attachShader(pr,sh(gl.VERTEX_SHADER,vs));gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,fs));gl.linkProgram(pr);
-  const W=1.7,H=W*780/1280,Z=-2.2;
-  const buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf);
-  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-W,-H,Z,0,1, W,-H,Z,1,1, -W,H,Z,0,0, W,H,Z,1,0]),gl.STATIC_DRAW);
-  const tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
-  const aP=gl.getAttribLocation(pr,'p'),aT=gl.getAttribLocation(pr,'t'),uP=gl.getUniformLocation(pr,'P');
-  session.addEventListener('select',()=>{recenter=true;});
-  session.addEventListener('squeeze',()=>{follow=!follow;recenter=true;});
-  session.addEventListener('end',()=>{inVR=false;fetch('/head?p=0&y=0&f=0').catch(()=>{});});
-  function onFrame(t,fr){
-    session.requestAnimationFrame(onFrame);
-    const pose=fr.getViewerPose(ref); if(!pose)return;
-    // Orientation de la tête : direction du regard -> cap (droite > 0) et inclinaison (haut > 0)
-    const q=pose.transform.orientation;
-    const fx=-2*(q.x*q.z+q.w*q.y), fy=-2*(q.y*q.z-q.w*q.x), fz=-(1-2*(q.x*q.x+q.y*q.y));
-    const yaw=Math.atan2(fx,-fz)*180/Math.PI, pitch=Math.asin(Math.max(-1,Math.min(1,fy)))*180/Math.PI;
-    if(t-lastHead>50){lastHead=t;
-      fetch('/head?p='+pitch.toFixed(1)+'&y='+yaw.toFixed(1)+'&f='+(follow?1:0)+'&c='+(recenter?1:0),{cache:'no-store'})
-        .then(r=>r.json()).then(s=>{state=s;needUpload=true;}).catch(()=>{});
-      recenter=false;}
-    if(needUpload){compose();gl.bindTexture(gl.TEXTURE_2D,tex);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,comp);needUpload=false;}
-    const layer=session.renderState.baseLayer;
-    gl.bindFramebuffer(gl.FRAMEBUFFER,layer.framebuffer);
-    gl.clearColor(0,0,0,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
-    gl.useProgram(pr);gl.bindBuffer(gl.ARRAY_BUFFER,buf);
-    gl.enableVertexAttribArray(aP);gl.vertexAttribPointer(aP,3,gl.FLOAT,false,20,0);
-    gl.enableVertexAttribArray(aT);gl.vertexAttribPointer(aT,2,gl.FLOAT,false,20,12);
-    gl.bindTexture(gl.TEXTURE_2D,tex);
-    for(const view of pose.views){
-      const vp=layer.getViewport(view);gl.viewport(vp.x,vp.y,vp.width,vp.height);
-      gl.uniformMatrix4fv(uP,false,view.projectionMatrix);
-      gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
-    }
-  }
-  session.requestAnimationFrame(onFrame);
+    out.resume();mic.resume();
+    audio={ws,out,mic,stream};audioOn=true;dirty=true;
+    talk.textContent='🎙 Conversation dans le casque';talk.disabled=true;
+    ws.onclose=()=>{stream.getTracks().forEach(t2=>t2.stop());mic.close();out.close();audio=null;audioOn=false;dirty=true;
+      talk.textContent='🎙 Parler à l\'IA ici';talk.disabled=false;};
+  }catch(e){note.textContent='Audio impossible : '+e.message;}
 }
 </script></body></html>
 """.trimIndent()

@@ -124,6 +124,18 @@ class DjiDrone(
 
     override fun applyLimits() = link.setLimits(limits.maxAltitudeM.toInt(), limits.maxDistanceM.toInt())
 
+    override fun telemetry(): Map<String, Any?> {
+        val base = super.telemetry().toMutableMap()
+        val t = link.telemetry()
+        // Sans GPS, le cap du départ vient de l'estimation interne : on le recale sur la boussole.
+        if (t["homeBearing"] == null) {
+            val rel = (base["homeBearing"] as Double) - heading
+            base["homeBearing"] = link.heading() + rel
+        }
+        base.putAll(t)
+        return base
+    }
+
     override fun battery(): Int? = link.battery()
     override fun altitude(): Double = link.altitude().toDouble()
 
