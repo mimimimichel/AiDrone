@@ -9,10 +9,10 @@ import kotlin.math.sqrt
 
 /** Réglages de sécurité. Ajuste-les avant de voler. */
 data class Limits(
-    @Volatile var maxAltitudeM: Double = 3.0, // plafond (envoyé au drone et vérifié ici, réglable : 2 à 30 m)
+    @Volatile var maxAltitudeM: Double = 3.0, // plafond (envoyé au drone et vérifié ici, réglable : 2 à 120 m, la limite légale)
     val minAltitudeM: Double = 0.6,   // l'IA ne descend pas plus bas en vol
-    @Volatile var maxDistanceM: Double = 15.0, // rayon autour du décollage (estimation, réglable : 5 à 100 m)
-    val missionStepM: Double = 5.0,   // longueur max d'un segment pendant une mission de recherche
+    @Volatile var maxDistanceM: Double = 15.0, // rayon autour du décollage (estimation, réglable : 5 à 500 m)
+    val missionStepM: Double = 20.0,  // longueur max d'un segment pendant une mission de recherche
     @Volatile var maxStepM: Double = 1.0, // déplacement max par action (réglable : 0,2 à 1 m)
     val maxYawDeg: Double = 90.0,     // rotation max par action
     val maxSteps: Int = 40,           // actions max par session IA

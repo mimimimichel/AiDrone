@@ -31,7 +31,8 @@ class AreaSearch(
     private val onPlan: (Plan) -> Unit,
 ) {
     companion object {
-        const val RETURN_BATTERY = 35   // en dessous (%), on rentre
+        /** En dessous (%), on rentre : plus on est loin, plus il faut de marge pour revenir. */
+        fun returnBattery(distanceM: Double) = (30 + distanceM / 25).coerceAtMost(60.0).toInt()
         const val MIN_START_BATTERY = 45
         const val SCAN_TILT = -30.0     // caméra pour regarder le terrain autour
         const val TRAVEL_TILT = -10.0   // caméra en route (le détecteur d'obstacles reste actif)
@@ -57,9 +58,10 @@ class AreaSearch(
             return "refusé : batterie à $bat %, il faut au moins $MIN_START_BATTERY % pour une mission de recherche"
         }
         val radius = (radiusReq ?: l.maxDistanceM).coerceIn(1.0, l.maxDistanceM * 0.9)
-        val alt = (altitudeReq ?: minOf(8.0, l.maxAltitudeM)).coerceIn(1.2, l.maxAltitudeM)
+        // Plus la zone est grande, plus on monte (on voit plus loin) : de 8 à 40 m, jamais au-dessus du plafond.
+        val alt = (altitudeReq ?: (radius / 5).coerceIn(8.0, 40.0)).coerceIn(1.2, l.maxAltitudeM)
         // Distance entre deux points de la spirale : à peu près ce que la caméra couvre depuis l'altitude choisie.
-        val spacing = if (simulation) 1.0 else (alt * 1.6).coerceIn(4.0, 15.0)
+        val spacing = if (simulation) 1.0 else (alt * 1.6).coerceIn(4.0, 60.0)
         val points = spiral(spacing, radius)
 
         plan = Plan(
@@ -128,7 +130,7 @@ class AreaSearch(
 
     private fun checkBattery() {
         val b = drone.battery() ?: return
-        if (b < RETURN_BATTERY && !simulation) {
+        if (b < returnBattery(hypot(drone.x, drone.y)) && !simulation) {
             report("🔋 Batterie à $b % : je rentre")
             val i = plan.steps.indexOfFirst { it.state == StepState.DOING }
             if (i >= 0) setStep(i, StepState.FAILED, "batterie faible")

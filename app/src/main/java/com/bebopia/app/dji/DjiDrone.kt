@@ -22,7 +22,8 @@ class DjiDrone(
     private val log: (String) -> Unit,
 ) : DroneBase(limits) {
     companion object {
-        const val SPEED = 0.5        // m/s à l'horizontale (prudent en intérieur, dans une cage)
+        const val SPEED = 0.5        // m/s à l'horizontale pour les petits pas (prudent en intérieur, dans une cage)
+        const val MISSION_SPEED = 3.0 // m/s pour les longs segments d'une mission en extérieur
         const val VSPEED = 0.4       // m/s à la verticale
         const val YAW_RATE = 40.0    // °/s
     }
@@ -103,7 +104,9 @@ class DjiDrone(
     override fun doMove(forward: Double, right: Double, down: Double, yawRad: Double, waitS: Double) {
         cancel = false
         val yawDeg = Math.toDegrees(yawRad)
-        val t = max(max(hypot(forward, right) / SPEED, abs(down) / VSPEED), max(abs(yawDeg) / YAW_RATE, 0.5))
+        val dist = hypot(forward, right)
+        val speed = if (dist > 3) MISSION_SPEED else SPEED
+        val t = max(max(dist / speed, abs(down) / VSPEED), max(abs(yawDeg) / YAW_RATE, 0.5))
         val vf = (forward / t).toFloat()
         val vr = (right / t).toFloat()
         val vu = (-down / t).toFloat()

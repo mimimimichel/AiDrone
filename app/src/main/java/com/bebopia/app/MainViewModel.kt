@@ -111,11 +111,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         get() = prefs.getBoolean("robot_voice", true)
         private set(v) = prefs.edit().putBoolean("robot_voice", v).apply()
     var ceiling: Double
-        get() = prefs.getFloat("ceiling", 3f).toDouble().coerceIn(2.0, 30.0)
-        private set(v) = prefs.edit().putFloat("ceiling", v.coerceIn(2.0, 30.0).toFloat()).apply()
+        get() = prefs.getFloat("ceiling", 3f).toDouble().coerceIn(2.0, 120.0)
+        private set(v) = prefs.edit().putFloat("ceiling", v.coerceIn(2.0, 120.0).toFloat()).apply()
     var radius: Double
-        get() = prefs.getFloat("radius", 15f).toDouble().coerceIn(5.0, 100.0)
-        private set(v) = prefs.edit().putFloat("radius", v.coerceIn(5.0, 100.0).toFloat()).apply()
+        get() = prefs.getFloat("radius", 15f).toDouble().coerceIn(5.0, 500.0)
+        private set(v) = prefs.edit().putFloat("radius", v.coerceIn(5.0, 500.0).toFloat()).apply()
     var guardOn: Boolean
         get() = prefs.getBoolean("guard", true)
         private set(v) = prefs.edit().putBoolean("guard", v).apply()

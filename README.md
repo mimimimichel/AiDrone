@@ -54,9 +54,9 @@ Exemples de phrases : « qu'est-ce que tu vois ? », « décolle », « tourne-t
 2. tour d'horizon depuis le point de départ ;
 3. spirale qui s'élargit autour du départ (un point tous les 4 à 15 m selon l'altitude), avec un tour complet à chaque point ; chaque image est analysée par Gemini, et une « piste » incertaine est vérifiée de plus près ;
 4. cible trouvée : le drone se met face à elle, estime sa distance et s'en approche en gardant 4 m de marge si tu l'as demandé ;
-5. rien trouvé, zone couverte ou batterie sous 35 % : retour au point de départ (estimé, sans GPS).
+5. rien trouvé, zone couverte ou batterie trop basse pour rentrer (30 % + 1 % tous les 25 m d'éloignement) : retour au point de départ (estimé, sans GPS).
 
-Avant de voler dehors, règle dans ⚙ le **plafond** (2 à 30 m) et le **rayon** (5 à 100 m) : ils sont envoyés au Bebop. Il faut au moins 45 % de batterie pour lancer une mission. « Stop » ou « Arrêter le plan » arrête tout, le drone reste sur place. Le détecteur d'obstacles ne voit que devant : vole loin des arbres, des lignes électriques et des gens, et garde toujours le drone en vue.
+Avant de voler dehors, règle dans ⚙ le **plafond** (2 à 120 m, la limite légale) et le **rayon** (5 à 500 m) : ils sont envoyés au Bebop. Il faut au moins 45 % de batterie pour lancer une mission. « Stop » ou « Arrêter le plan » arrête tout, le drone reste sur place. Le détecteur d'obstacles ne voit que devant : vole loin des arbres, des lignes électriques et des gens, et garde toujours le drone en vue.
 
 **Chercher un objet** : « trouve la tulipe rouge », « cherche le robot aspirateur et approche-toi ». Le drone tourne sur lui-même par pas de 45° ; à chaque arrêt, une image nette est analysée par Gemini Robotics-ER (spécialisé dans le repérage d'objets). S'il ne trouve rien à hauteur, il refait un tour caméra inclinée vers le bas. Une fois l'objet trouvé, il se met face à lui et, si tu l'as demandé, s'en approche par petits pas (garde-fous et détecteur d'obstacles actifs). L'avancement s'affiche dans la conversation (🔎). En simulation, l'app te dit de tourner le téléphone à chaque pas.
 

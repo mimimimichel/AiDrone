@@ -598,12 +598,13 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
                     steps = 7,
                 )
                 Text("Plafond : %d m".format(Math.round(ceiling)), modifier = Modifier.padding(top = 12.dp))
-                Slider(value = ceiling, onValueChange = { ceiling = it }, valueRange = 2f..30f, steps = 27)
+                Slider(value = ceiling, onValueChange = { ceiling = it }, valueRange = 2f..120f)
                 Text("Rayon autour du décollage : %d m".format(Math.round(radius / 5f) * 5))
-                Slider(value = radius, onValueChange = { radius = it }, valueRange = 5f..100f, steps = 18)
+                Slider(value = radius, onValueChange = { radius = it }, valueRange = 5f..500f)
                 Text(
-                    "En intérieur, garde 3 m et 15 m. Pour chercher sur un terrain, monte à 8–15 m et 30–60 m, " +
-                        "loin des arbres, des lignes électriques et des gens.",
+                    "En intérieur, garde 3 m et 15 m. Sur un terrain : 20 à 50 m de plafond, 50 à 300 m de rayon. " +
+                        "120 m est la limite légale ; garde toujours le drone en vue, loin des gens et des lignes électriques. " +
+                        "Le Wi-Fi du Bebop porte environ 100 à 300 m avec un téléphone.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
