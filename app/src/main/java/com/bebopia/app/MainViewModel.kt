@@ -550,7 +550,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---- conversation en direct (Gemini Live) ---------------------------------------------
-    private fun startLive(a: Agent) {
+    private fun startLive(a: Agent, fromHeadset: Boolean = false) {
         val d = drone ?: return
         val eyes = agentEyes ?: return
         val l = GeminiLive(
@@ -626,8 +626,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             onError = { msg -> a.addChat(Role.SYSTEM, msg) },
             bargeIn = bargeIn,
             robot = { robotVoice },
+            micOptional = fromHeadset || headsetAudioClients > 0,
         )
         live = l
+        routeLiveAudio()
         l.start()
         if (!l.active) {
             live = null
@@ -667,6 +669,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             state = ::headsetState,
             onHead = { p, y, follow, recenter -> drone?.headLook(p, y, follow, recenter) },
             tls = headsetTls(),
+            onMic = { pcm -> live?.feedMic(pcm) },
+            onAudioClients = { n -> headsetAudio(n) },
         )
         if (!h.start()) {
             sysMessage("Impossible de lancer la vue dans le casque (port 8080 occupé ?).")
@@ -681,6 +685,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 "Dehors, sans box : active le point d'accès mobile du téléphone et connecte le Quest dessus.",
         )
         refresh()
+    }
+
+    @Volatile private var headsetAudioClients = 0
+
+    /** Casque relié (ou non) en audio : la conversation passe par lui. */
+    private fun headsetAudio(n: Int) {
+        headsetAudioClients = n
+        if (n > 0) {
+            if (live == null && useLive && agent != null) {
+                viewModelScope.launch(Dispatchers.Main) {
+                    agent?.let { startLive(it, fromHeadset = true) }
+                    routeLiveAudio()
+                }
+            } else {
+                routeLiveAudio()
+            }
+            sysMessage("🎧 Audio dans le casque : parle avec le micro du Quest, la voix de l'IA sort dans le casque.")
+        } else {
+            routeLiveAudio()
+            sysMessage("🎧 Audio du casque coupé : la voix repasse par le téléphone.")
+        }
+    }
+
+    private fun routeLiveAudio() {
+        val l = live ?: return
+        val h = headset
+        if (headsetAudioClients > 0 && h != null) {
+            l.audioOut = { pcm -> h.sendAudio(pcm) }
+            l.onFlush = { h.sendText("flush") }
+            l.useLocalSpeaker = false
+        } else {
+            l.audioOut = null
+            l.onFlush = null
+            l.useLocalSpeaker = true
+        }
     }
 
     /** Certificat de l'adresse https du casque (fourni dans l'application, auto-signé). */

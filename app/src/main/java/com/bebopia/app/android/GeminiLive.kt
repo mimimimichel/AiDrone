@@ -55,6 +55,8 @@ class GeminiLive(
     private val bargeIn: Boolean,
     /** Voix de robot (effet appliqué au son de Gemini). */
     private val robot: () -> Boolean = { false },
+    /** true : la conversation peut démarrer sans le micro du téléphone (le casque fournit le sien). */
+    private val micOptional: Boolean = false,
 ) {
     companion object {
         private const val TAG = "GeminiLive"
@@ -96,6 +98,30 @@ class GeminiLive(
     private var echo: AcousticEchoCanceler? = null
     private var noise: NoiseSuppressor? = null
     private val playQueue = LinkedBlockingQueue<ByteArray>()
+
+    // ---- audio déporté (casque) -------------------------------------------------------------
+    /** Voix de l'IA (PCM 16 bits, 24 kHz, effet robot compris) envoyée au casque. */
+    @Volatile var audioOut: ((ByteArray) -> Unit)? = null
+    /** Le pilote a coupé la parole : le casque doit jeter ce qu'il reste à dire. */
+    @Volatile var onFlush: (() -> Unit)? = null
+    /** false quand la voix sort dans le casque : le haut-parleur du téléphone se tait. */
+    @Volatile var useLocalSpeaker = true
+    @Volatile private var externalMicAt = 0L
+    @Volatile private var remoteSpeakingUntil = 0L
+    private var externalQuietUntil = 0L
+
+    /** Son du micro du casque (PCM 16 bits, 16 kHz) : remplace celui du téléphone tant qu'il arrive. */
+    fun feedMic(pcm: ByteArray) {
+        if (!active || !setupDone || pcm.isEmpty()) return
+        externalMicAt = System.currentTimeMillis()
+        if (!bargeIn) {
+            if (speaking) externalQuietUntil = System.currentTimeMillis() + 400
+            if (System.currentTimeMillis() < externalQuietUntil) return
+        }
+        val b64 = Base64.encodeToString(pcm, Base64.NO_WRAP)
+        send(JSONObject().put("realtimeInput", JSONObject().put("audio",
+            JSONObject().put("data", b64).put("mimeType", "audio/pcm;rate=$IN_RATE"))))
+    }
     private val robotFx = RobotVoice(OUT_RATE)
     @Volatile private var framesWritten = 0L
     @Volatile private var playGeneration = 0
@@ -353,6 +379,7 @@ class GeminiLive(
     // ---- audio ------------------------------------------------------------------------------
     private val speaking: Boolean
         get() {
+            if (System.currentTimeMillis() < remoteSpeakingUntil) return true
             val t = track ?: return false
             return playQueue.isNotEmpty() || (t.playbackHeadPosition.toLong() and 0xFFFFFFFFL) < framesWritten
         }
@@ -371,15 +398,21 @@ class GeminiLive(
         audio.mode = AudioManager.MODE_IN_COMMUNICATION
         routeToSpeaker()
 
-        val minIn = AudioRecord.getMinBufferSize(IN_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-        val rec = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, IN_RATE,
-            AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minIn, IN_RATE))
-        if (rec.state != AudioRecord.STATE_INITIALIZED) {
-            rec.release()
-            throw IllegalStateException("micro occupé")
+        // Micro du téléphone : facultatif quand le casque fournit le sien.
+        val rec = try {
+            val minIn = AudioRecord.getMinBufferSize(IN_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+            AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, IN_RATE,
+                AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minIn, IN_RATE))
+                .also { if (it.state != AudioRecord.STATE_INITIALIZED) { it.release(); throw IllegalStateException("micro occupé") } }
+        } catch (e: Exception) {
+            if (!micOptional) throw e
+            Log.w(TAG, "micro du téléphone indisponible, micro du casque seulement", e)
+            null
         }
-        if (AcousticEchoCanceler.isAvailable()) echo = AcousticEchoCanceler.create(rec.audioSessionId)?.apply { setEnabled(true) }
-        if (NoiseSuppressor.isAvailable()) noise = NoiseSuppressor.create(rec.audioSessionId)?.apply { setEnabled(true) }
+        if (rec != null) {
+            if (AcousticEchoCanceler.isAvailable()) echo = AcousticEchoCanceler.create(rec.audioSessionId)?.apply { setEnabled(true) }
+            if (NoiseSuppressor.isAvailable()) noise = NoiseSuppressor.create(rec.audioSessionId)?.apply { setEnabled(true) }
+        }
         record = rec
 
         val minOut = AudioTrack.getMinBufferSize(OUT_RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -399,8 +432,10 @@ class GeminiLive(
         track = tr
         framesWritten = 0
         tr.play()
-        rec.startRecording()
-        safeThread("live-mic") { micLoop(rec) }
+        if (rec != null) {
+            rec.startRecording()
+            safeThread("live-mic") { micLoop(rec) }
+        }
         safeThread("live-speaker") { speakerLoop(tr) }
     }
 
@@ -429,6 +464,8 @@ class GeminiLive(
             val n = rec.read(buf, 0, buf.size)
             if (n <= 0) continue
             if (!setupDone) continue
+            // Le micro du casque est utilisé : celui du téléphone se tait.
+            if (System.currentTimeMillis() - externalMicAt < 500) continue
             if (!bargeIn) {
                 // Micro coupé pendant que le drone parle (et un court instant après).
                 if (speaking) quietUntil = System.currentTimeMillis() + 400
@@ -449,6 +486,12 @@ class GeminiLive(
             val chunk = playQueue.poll(200, TimeUnit.MILLISECONDS) ?: continue
             val gen = playGeneration
             if (robot()) robotFx.process(chunk)
+            audioOut?.let { out ->
+                out(chunk)
+                val now = System.currentTimeMillis()
+                remoteSpeakingUntil = maxOf(now, remoteSpeakingUntil) + chunk.size * 1000L / (2 * OUT_RATE)
+            }
+            if (!useLocalSpeaker) continue
             var off = 0
             while (off < chunk.size && active && gen == playGeneration) {
                 val w = tr.write(chunk, off, chunk.size - off)
@@ -464,6 +507,8 @@ class GeminiLive(
         playGeneration++
         playQueue.clear()
         robotFx.reset()
+        remoteSpeakingUntil = 0
+        onFlush?.invoke()
         track?.let { t ->
             runCatching {
                 t.pause()

@@ -4,8 +4,6 @@ import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.io.OutputStream
 import java.net.Inet4Address
 import java.net.NetworkInterface
@@ -34,6 +32,10 @@ class HeadsetStream(
     private val tls: javax.net.ssl.SSLServerSocketFactory? = null,
     private val port: Int = 8080,
     private val tlsPort: Int = 8443,
+    /** Son du micro du casque (PCM 16 bits, 16 kHz). */
+    private val onMic: (ByteArray) -> Unit = {},
+    /** Nombre de casques reliés en audio (0 = la voix repasse par le téléphone). */
+    private val onAudioClients: (Int) -> Unit = {},
 ) {
     companion object {
         private const val TAG = "HeadsetStream"
@@ -160,17 +162,33 @@ class HeadsetStream(
         }
     }
 
+    /** Lit une ligne d'en-tête HTTP octet par octet (sans tampon : le flux sert ensuite au WebSocket). */
+    private fun readLine(input: java.io.InputStream): String? {
+        val sb = StringBuilder()
+        while (true) {
+            val b = input.read()
+            if (b < 0) return if (sb.isEmpty()) null else sb.toString()
+            if (b == '\n'.code) return sb.toString().trimEnd('\r')
+            sb.append(b.toChar())
+            if (sb.length > 8192) return null
+        }
+    }
+
     private fun handle(c: Socket) {
         c.soTimeout = 15_000
-        val reader = BufferedReader(InputStreamReader(c.getInputStream()))
-        val request = reader.readLine() ?: return
+        val input = c.getInputStream()
+        val request = readLine(input) ?: return
+        val headers = HashMap<String, String>()
         while (true) {
-            val line = reader.readLine() ?: break
+            val line = readLine(input) ?: break
             if (line.isEmpty()) break
+            val i = line.indexOf(':')
+            if (i > 0) headers[line.substring(0, i).trim().lowercase()] = line.substring(i + 1).trim()
         }
         val path = request.split(' ').getOrNull(1) ?: "/"
         val out = c.getOutputStream()
         when {
+            path.startsWith("/audio") && headers["upgrade"]?.lowercase() == "websocket" -> audio(c, input, out, headers["sec-websocket-key"] ?: return)
             path.startsWith("/stream") -> stream(out)
             path.startsWith("/state") -> send(out, "application/json; charset=utf-8", state().toByteArray())
             path.startsWith("/head") -> {
@@ -187,6 +205,84 @@ class HeadsetStream(
                 else send(out, "image/jpeg", f)
             }
             else -> send(out, "text/html; charset=utf-8", PAGE.toByteArray())
+        }
+    }
+
+    // ---- audio du casque (WebSocket) ---------------------------------------------------------
+    private class AudioClient(val out: OutputStream)
+    private val audioClients = java.util.concurrent.CopyOnWriteArrayList<AudioClient>()
+
+    /** Envoie la voix de l'IA à tous les casques reliés (PCM 16 bits, 24 kHz). */
+    fun sendAudio(pcm: ByteArray) {
+        for (cl in audioClients) runCatching { wsSend(cl, 0x2, pcm) }.onFailure { audioClients.remove(cl) }
+    }
+
+    /** Message de commande au casque (ex. « flush » : jeter le son en attente). */
+    fun sendText(text: String) {
+        for (cl in audioClients) runCatching { wsSend(cl, 0x1, text.toByteArray()) }.onFailure { audioClients.remove(cl) }
+    }
+
+    private fun wsSend(cl: AudioClient, opcode: Int, payload: ByteArray) {
+        val n = payload.size
+        val header = java.io.ByteArrayOutputStream()
+        header.write(0x80 or opcode)
+        when {
+            n < 126 -> header.write(n)
+            n < 65536 -> { header.write(126); header.write(n shr 8); header.write(n and 0xFF) }
+            else -> { header.write(127); for (i in 7 downTo 0) header.write(((n.toLong() shr (8 * i)) and 0xFF).toInt()) }
+        }
+        synchronized(cl) {
+            cl.out.write(header.toByteArray())
+            cl.out.write(payload)
+            cl.out.flush()
+        }
+    }
+
+    private fun readFully(input: java.io.InputStream, buf: ByteArray) {
+        var off = 0
+        while (off < buf.size) {
+            val r = input.read(buf, off, buf.size - off)
+            if (r < 0) throw java.io.EOFException()
+            off += r
+        }
+    }
+
+    private fun audio(c: Socket, input: java.io.InputStream, out: OutputStream, key: String) {
+        val accept = android.util.Base64.encodeToString(
+            java.security.MessageDigest.getInstance("SHA-1").digest((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").toByteArray()),
+            android.util.Base64.NO_WRAP,
+        )
+        out.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+            "Sec-WebSocket-Accept: $accept\r\n\r\n").toByteArray())
+        out.flush()
+        c.soTimeout = 0
+        val cl = AudioClient(out)
+        audioClients.add(cl)
+        onAudioClients(audioClients.size)
+        try {
+            val head = ByteArray(2)
+            while (running) {
+                readFully(input, head)
+                val opcode = head[0].toInt() and 0x0F
+                val masked = (head[1].toInt() and 0x80) != 0
+                var len = (head[1].toInt() and 0x7F).toLong()
+                if (len == 126L) { val e = ByteArray(2); readFully(input, e); len = ((e[0].toInt() and 0xFF) shl 8 or (e[1].toInt() and 0xFF)).toLong() }
+                else if (len == 127L) { val e = ByteArray(8); readFully(input, e); len = e.fold(0L) { acc, b -> (acc shl 8) or (b.toLong() and 0xFF) } }
+                if (len > 1_000_000) break
+                val mask = ByteArray(4)
+                if (masked) readFully(input, mask)
+                val payload = ByteArray(len.toInt())
+                readFully(input, payload)
+                if (masked) for (i in payload.indices) payload[i] = (payload[i].toInt() xor mask[i % 4].toInt()).toByte()
+                when (opcode) {
+                    0x2 -> onMic(payload)
+                    0x8 -> break
+                    0x9 -> wsSend(cl, 0xA, payload) // ping -> pong
+                }
+            }
+        } finally {
+            audioClients.remove(cl)
+            onAudioClients(audioClients.size)
         }
     }
 
@@ -259,6 +355,7 @@ class HeadsetStream(
 <div id="say"></div>
 <div id="btns"><span id="note"></span>
   <button onclick="document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen()">Plein écran</button>
+  <button id="talk">🎙 Parler à l'IA ici</button>
   <button id="vr" style="display:none">🥽 Entrer en VR</button></div>
 <canvas id="gl"></canvas>
 <script>
@@ -283,7 +380,43 @@ if(!window.isSecureContext){
 }else if(navigator.xr){
   navigator.xr.isSessionSupported('immersive-vr').then(ok=>{if(ok)vrBtn.style.display='inline-block';else note.textContent='VR non disponible dans ce navigateur.'});
 }
-vrBtn.onclick=startVR;
+vrBtn.onclick=()=>{startAudio();startVR();};
+document.getElementById('talk').onclick=startAudio;
+
+// ---------- Audio : le micro du casque parle à l'IA, sa voix sort dans le casque ----------
+const WORKLET="class MicPcm extends AudioWorkletProcessor{constructor(){super();this.b=new Int16Array(1600);this.n=0}"+
+ "process(i){const c=i[0][0];if(c)for(let k=0;k<c.length;k++){const s=Math.max(-1,Math.min(1,c[k]));"+
+ "this.b[this.n++]=s<0?s*0x8000:s*0x7fff;if(this.n===this.b.length){this.port.postMessage(this.b.buffer.slice(0));this.n=0}}return true}}"+
+ "registerProcessor('mic-pcm',MicPcm);";
+let audio=null;
+async function startAudio(){
+  if(audio)return;
+  const talk=document.getElementById('talk');
+  if(!window.isSecureContext||!navigator.mediaDevices){note.textContent='Pour l\'audio dans le casque, ouvre l\'adresse https://…:8443.';return;}
+  try{
+    const ws=new WebSocket('wss://'+location.host+'/audio'); ws.binaryType='arraybuffer';
+    const out=new AudioContext({sampleRate:24000}); let next=0; const playing=new Set();
+    ws.onmessage=e=>{
+      if(typeof e.data==='string'){ if(e.data==='flush'){playing.forEach(s=>{try{s.stop()}catch(_){}});playing.clear();next=0;} return; }
+      const pcm=new Int16Array(e.data); const buf=out.createBuffer(1,pcm.length,24000); const ch=buf.getChannelData(0);
+      for(let i=0;i<pcm.length;i++)ch[i]=pcm[i]/32768;
+      const src=out.createBufferSource(); src.buffer=buf; src.connect(out.destination);
+      next=Math.max(next,out.currentTime+0.05); src.start(next); next+=buf.duration;
+      playing.add(src); src.onended=()=>playing.delete(src);
+    };
+    const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+    const mic=new AudioContext({sampleRate:16000});
+    await mic.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET],{type:'application/javascript'})));
+    const node=new AudioWorkletNode(mic,'mic-pcm');
+    node.port.onmessage=({data})=>{ if(ws.readyState===1) ws.send(data); };
+    mic.createMediaStreamSource(stream).connect(node);
+    out.resume(); mic.resume();
+    audio={ws,out,mic,stream};
+    talk.textContent='🎙 Conversation dans le casque'; talk.disabled=true;
+    ws.onclose=()=>{ stream.getTracks().forEach(t=>t.stop()); mic.close(); out.close(); audio=null;
+      talk.textContent='🎙 Parler à l\'IA ici'; talk.disabled=false; };
+  }catch(e){ note.textContent='Audio impossible : '+e.message; }
+}
 
 const comp=document.createElement('canvas'); comp.width=1280; comp.height=780;
 const cx=comp.getContext('2d');

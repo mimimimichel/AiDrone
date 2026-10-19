@@ -78,6 +78,8 @@ Dans ⚙, active **Vue dans le casque**. L'app affiche une adresse du type `http
 - **gâchette avant** : recentrer (la direction actuelle devient « devant »).
 La rotation par la tête s'arrête dès que l'IA déplace le drone, ou si le casque ne répond plus pendant une seconde.
 
+**Parler à l'IA depuis le casque** : sur la page `https`, touche **🎙 Parler à l'IA ici** (autorise le micro la première fois), ou entre en VR : l'audio démarre aussi. Le micro du Quest remplace celui du téléphone et la voix de l'IA sort dans le casque (le téléphone se tait). La conversation s'ouvre toute seule si elle ne l'était pas. Tu peux toujours couper la parole à l'IA, et « stop » / « atterris » restent instantanés.
+
 ## Garde-fous
 
 - L'IA ne commande jamais les moteurs : elle propose une action, le code la vérifie puis l'exécute.
