@@ -988,6 +988,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .put("nav", runCatching { nav?.mapJson() }.getOrNull() ?: org.json.JSONObject.NULL)
             .put("activity", clean(s.activity))
             .put("rec", s.recording)
+            .put("moveArrow", runCatching {
+                val a = agent
+                val mv = (a?.pending ?: a?.currentAction)?.takeIf { it["type"] == "move" }
+                val f = Agent.num(mv ?: emptyMap(), "forward")
+                val r = Agent.num(mv ?: emptyMap(), "right")
+                if (d != null && mv != null && kotlin.math.hypot(f, r) > 0.05) org.json.JSONObject()
+                    .put("b", ((mv["_vue"] as? Double) ?: d.bodyCompass()) + Math.toDegrees(kotlin.math.atan2(r, f)))
+                    .put("d", kotlin.math.hypot(f, r))
+                    .put("pending", a?.pending != null)
+                else null
+            }.getOrNull() ?: org.json.JSONObject.NULL)
             .put("track", agent?.follower?.let { f ->
                 f.box?.let { b ->
                     org.json.JSONObject().put("cx", b.cx).put("cy", b.cy).put("w", b.w).put("h", b.h)

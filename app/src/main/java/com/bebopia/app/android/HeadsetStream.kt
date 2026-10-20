@@ -377,6 +377,7 @@ function wrap(s,x,y,maxW,lh,maxLines,size,color){g.font=size+'px sans-serif';g.f
 function num(v,d){return (typeof v==='number'&&isFinite(v))?v:d;}
 function f1(v){return num(v,0).toFixed(1).replace('.',',');}
 function norm(a){return ((a%360)+540)%360-180;}
+const MOVE='#E040FB';
 function card(h){const n=['N','NE','E','SE','S','SO','O','NO'];return n[Math.round((((h%360)+360)%360)/45)%8];}
 function mmss(s){s=Math.max(0,Math.round(num(s,0)));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');}
 
@@ -508,7 +509,7 @@ function drawLeft(s,tel){
   t(tel.lowBattery?'Seuil d\'alerte atteint':'',x+18,VY+178,20,RED);
   // Navigation
   const ny=VY+202;panel(x,ny,w,270,'NAVIGATION');
-  drawMap(g,x+90,ny+140,72,tel,s.nav);
+  drawMap(g,x+90,ny+140,72,tel,s.nav,s.moveArrow);
   const hd=num(tel.homeDist,num(s.dist,0));
   t('Départ',x+172,ny+90,20,GREY);
   t(f1(hd)+' m',x+172,ny+130,34,CYAN,'left',true);
@@ -564,7 +565,7 @@ function tile(z,x,y){const k=z+'/'+x+'/'+y;let im=tiles.get(k);
 function proj(lat,lon,z){const n=Math.pow(2,z)*256,r=lat*Math.PI/180;
   return [(lon+180)/360*n,(1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*n];}
 // Carte ronde centrée sur le drone, orientée dans sa direction (le haut = devant le drone).
-function drawMap(c,cx,cy,R,tel,nav){
+function drawMap(c,cx,cy,R,tel,nav,mv){
   nav=nav||{};
   c.save();c.beginPath();c.arc(cx,cy,R,0,Math.PI*2);c.closePath();
   c.fillStyle='rgba(10,20,15,.85)';c.fill();c.clip();
@@ -625,6 +626,14 @@ function drawMap(c,cx,cy,R,tel,nav){
   // Drone au centre, pointe vers le haut (= sa direction)
   c.fillStyle=WARN;c.strokeStyle='#000';c.lineWidth=3;c.beginPath();c.moveTo(cx,cy-18);c.lineTo(cx-12,cy+12);c.lineTo(cx,cy+5);c.lineTo(cx+12,cy+12);c.closePath();c.fill();c.stroke();
   c.strokeStyle=CYAN;c.lineWidth=3;c.beginPath();c.arc(cx,cy,R,0,Math.PI*2);c.stroke();
+  // Flèche du déplacement demandé (violet) : direction de la vue au moment de l'ordre
+  const hdD=hd*180/Math.PI;
+  if(mv&&typeof mv.b==='number'){const a=norm(mv.b-hdD)*Math.PI/180, L=Math.max(30,Math.min(R*0.85,mv.d*sc)), ex=cx+Math.sin(a)*L, ey=cy-Math.cos(a)*L;
+    c.save();c.strokeStyle=MOVE;c.fillStyle=MOVE;c.lineWidth=mv.pending?4:6;if(mv.pending)c.setLineDash([8,6]);
+    c.beginPath();c.moveTo(cx,cy);c.lineTo(ex,ey);c.stroke();c.setLineDash([]);
+    c.translate(ex,ey);c.rotate(a);c.beginPath();c.moveTo(0,-4);c.lineTo(-11,14);c.lineTo(11,14);c.closePath();c.fill();c.restore();
+    c.font='bold 18px sans-serif';c.textAlign='center';c.strokeStyle='#000';c.lineWidth=4;const lb=f1(mv.d)+' m';
+    c.strokeText(lb,ex,ey-16);c.fillStyle=MOVE;c.fillText(lb,ex,ey-16);}
   // Échelle et crédit des images
   c.font='bold 16px sans-serif';c.textAlign='center';c.fillStyle='#fff';c.strokeStyle='#000';c.lineWidth=4;
   const rm=R/sc, scale='rayon '+(rm<10?rm.toFixed(1).replace('.',','):Math.round(rm))+' m';c.strokeText(scale,cx,cy+R-14);c.fillText(scale,cx,cy+R-14);
@@ -681,7 +690,7 @@ function drawOSD(){
   tx(f1(s.alt)+' m',w-120,cy+12,44,num(s.alt,0)>num(s.ceiling,99)-0.3?RED:HUD,'right',true);tx('ALT  (max '+Math.round(num(s.ceiling,3))+')',w-120,cy-36,22,GREY,'right',true);
   const vs=num(tel.vSpeed,0);if(Math.abs(vs)>0.1)tx((vs>0?'▲ ':'▼ ')+f1(Math.abs(vs)),w-120,cy+60,28,WARN,'right',true);
   // Bas gauche : mini-carte et distance du départ
-  drawMap(o,200,h-230,150,tel,s.nav);
+  drawMap(o,200,h-230,150,tel,s.nav,s.moveArrow);
   tx('H '+f1(num(tel.homeDist,num(s.dist,0)))+' m',50,h-400,36,CYAN,'left',true);
   // Bas droite : nacelle, détecteur
   tx('🎥 '+Math.round(num(tel.gimbal,0))+'°',w-60,h-170,32,HUD,'right',true);
@@ -697,7 +706,8 @@ function drawOSD(){
   if(s.mode&&s.mode!=='NONE'&&s.linkUp===false)tx('LIAISON PERDUE',cx,cy-260,44,RED,'center',true);
   // Bas centre : proposition, sous-titres
   let by=h-60;
-  if(s.pending){o.fillStyle='rgba(255,193,7,.92)';o.fillRect(cx-480,by-56,960,60);o.font='bold 28px sans-serif';o.textAlign='center';o.fillStyle='#000';o.fillText('L\'IA PROPOSE : '+s.pending+' — OUI / NON',cx,by-16);by-=74;}
+  if(s.pending){o.fillStyle='rgba(255,193,7,.92)';o.fillRect(cx-480,by-56,960,60);o.font='bold 28px sans-serif';o.textAlign='center';o.fillStyle='#000';o.fillText('L\'IA PROPOSE : '+s.pending+' — OUI / NON',cx,by-16);by-=74;
+    if(s.moveArrow){tx('flèche violette sur la carte = où il va, par rapport à ta vue quand tu as parlé',cx,by+4,24,MOVE,'center',true);by-=36;}}
   if(s.say){o.font='32px sans-serif';const lines=[];let line='';for(const wd of s.say.split(' ')){const tt=line?line+' '+wd:wd;if(o.measureText(tt).width>1100&&line){lines.push(line);line=wd;}else line=tt;}if(line)lines.push(line);
     for(const l of lines.slice(-2).reverse()){tx(l,cx,by,32,'#fff','center');by-=42;}}
 }

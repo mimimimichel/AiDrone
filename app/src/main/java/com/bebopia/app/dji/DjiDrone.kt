@@ -105,14 +105,24 @@ class DjiDrone(
                 }
                 continue
             }
-            val target = center + (headYaw - headYawCenter)
-            val err = angleDiff(target - link.heading())
-            // Vitesse proportionnelle à l'écart (rapide si la tête a beaucoup tourné, douce à l'arrivée)
-            val rate = if (abs(err) < 1.5) 0.0 else (err * 2.5).coerceIn(-100.0, 100.0)
-            link.sendSticks(0f, 0f, rate.toFloat(), 0f)
+            link.sendSticks(0f, 0f, followRate(center).toFloat(), 0f)
             sending = true
         }
     }
+
+    /** Vitesse de rotation pour prendre le cap de la tête : proportionnelle à l'écart, douce à l'arrivée. */
+    private fun followRate(center: Double): Double {
+        val err = angleDiff(center + (headYaw - headYawCenter) - link.heading())
+        return if (abs(err) < 1.5) 0.0 else (err * 2.5).coerceIn(-100.0, 100.0)
+    }
+
+    /** Le drone suit la tête du pilote (casque) : il continue pendant les déplacements. */
+    private fun following(): Boolean =
+        headFollow && !manual && System.currentTimeMillis() - headSeenAt < 1000 && droneYawCenter != null
+
+    override fun bodyCompass(): Double = moveRef ?: link.heading()
+    override val handlesViewFrame: Boolean get() = true
+    override fun moveFrameHeading(): Double = com.bebopia.app.core.norm180(bodyCompass() - takeoffCompass)
 
     /** Attend le résultat d'une commande DJI (null = réussite). */
     private fun call(timeoutS: Long = 10, cmd: (DjiLink.Done) -> Unit): String? {
@@ -284,19 +294,20 @@ class DjiDrone(
     override fun doMove(forward: Double, right: Double, down: Double, yawRad: Double, waitS: Double) {
         moving = true
         try {
-            moveNow(forward, right, down, yawRad)
+            moveNow(forward, right, down, yawRad, following())
         } finally {
             moving = false
-            // Après une rotation par l'IA, la direction actuelle redevient « devant » pour la tête.
-            droneYawCenter = link.heading()
-            headYawCenter = headYaw
         }
     }
 
-    private fun moveNow(forward: Double, right: Double, down: Double, yawRad: Double) {
+    private fun moveNow(forward: Double, right: Double, down: Double, yawRad: Double, follow: Boolean) {
         if (manual) throw IllegalStateException("le pilote a repris la main avec la radiocommande")
         cancel = false
         val yawDeg = Math.toDegrees(yawRad)
+        // Repère du déplacement : la vue au moment de l'ordre (fixe pendant tout le déplacement)
+        val ref = bodyCompass()
+        // Le drone suit la tête : une rotation demandée décale la correspondance tête -> drone d'autant.
+        if (follow && yawDeg != 0.0) droneYawCenter = com.bebopia.app.core.norm180(droneYawCenter!! + yawDeg)
         val dist = hypot(forward, right)
         val speed = if (dist > 3) MISSION_SPEED else SPEED
         val t = max(max(dist / speed, abs(down) / VSPEED), max(abs(yawDeg) / YAW_RATE, 0.5))
@@ -306,7 +317,13 @@ class DjiDrone(
         val vy = (yawDeg / t).toFloat()
         val end = System.currentTimeMillis() + (t * 1000).toLong()
         while (System.currentTimeMillis() < end && !cancel && link.flying()) {
-            link.sendSticks(vr, vf, vy, vu)
+            // Le drone tourne (tête ou rotation demandée) : la direction du déplacement reste celle de la vue au
+            // moment de l'ordre, on tourne donc le vecteur vitesse dans le repère actuel du drone.
+            val d = Math.toRadians(angleDiff(ref - link.heading()))
+            val bf = vf * kotlin.math.cos(d) - vr * kotlin.math.sin(d)
+            val br = vf * kotlin.math.sin(d) + vr * kotlin.math.cos(d)
+            val yr = if (follow) followRate(droneYawCenter!!).toFloat() else vy
+            link.sendSticks(br.toFloat(), bf.toFloat(), yr, vu)
             Thread.sleep(100)
         }
         // Freinage : vitesses nulles pendant une seconde

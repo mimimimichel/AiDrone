@@ -133,6 +133,24 @@ abstract class DroneBase(val limits: Limits) {
     /** Direction (cap absolu) où regarde la caméra, donc le pilote quand il a le casque. */
     open fun lookHeading(): Double = compass()
 
+    /**
+     * Cap absolu de la vue au moment de l'ordre (« avance », « à droite » = par rapport à ce que le pilote voyait alors).
+     * Le déplacement garde cette direction même si le pilote tourne la tête pendant qu'il s'exécute. null = vue actuelle.
+     */
+    @Volatile var moveRef: Double? = null
+
+    /** Le drone applique lui-même la direction de la vue au moment de l'ordre (DJI) ; sinon c'est fait ici. */
+    protected open val handlesViewFrame: Boolean get() = false
+
+    /** Cap absolu du « devant » du déplacement en cours : la vue au moment de l'ordre, sinon la vue actuelle. */
+    open fun bodyCompass(): Double = moveRef ?: lookHeading()
+
+    /** Écart entre la caméra maintenant et le « devant » du déplacement (°, positif = la caméra regarde plus à droite). */
+    fun cameraOffset(): Double = norm180(lookHeading() - bodyCompass())
+
+    /** Cap du « devant » du déplacement, dans le repère de la position estimée. */
+    protected open fun moveFrameHeading(): Double = norm180(heading + (moveRef?.let { norm180(it - compass()) } ?: 0.0))
+
     /** Le drone sait-il tenir une vitesse continue (suivi, plans de cinéma) ? Sinon : petits déplacements. */
     open val supportsVelocity: Boolean get() = false
 
@@ -250,7 +268,7 @@ abstract class DroneBase(val limits: Limits) {
         val newZ = (z + u).coerceIn(l.minAltitudeM, l.maxAltitudeM)
         val du = newZ - z
 
-        val h = Math.toRadians(heading)
+        val h = Math.toRadians(moveFrameHeading())
         val nx = x + f * cos(h) - r * sin(h)
         val ny = y + f * sin(h) + r * cos(h)
         if (hypot(nx, ny) > l.maxDistanceM) {
@@ -267,7 +285,7 @@ abstract class DroneBase(val limits: Limits) {
     fun returnHome(): String {
         if (!flying) return "refusé : le drone est au sol"
         syncHeading()
-        val h = Math.toRadians(heading)
+        val h = Math.toRadians(moveFrameHeading())
         val dx = -x
         val dy = -y
         val f = dx * cos(h) + dy * sin(h)
@@ -283,10 +301,21 @@ abstract class DroneBase(val limits: Limits) {
         val dist = sqrt(f * f + r * r + u * u)
         val waitS = 1.0 + dist / 0.6 + abs(yaw) / 40.0
         cancelReason = null
-        movingForward = f > 0.05
+        // Le détecteur d'obstacles ne surveille que si la caméra regarde dans la direction du déplacement.
+        val motion = Math.toDegrees(kotlin.math.atan2(r, f))
+        movingForward = hypot(f, r) > 0.05 && abs(norm180(motion - cameraOffset())) < 35
         val t0 = System.currentTimeMillis()
+        // Drone qui ne gère pas lui-même la vue de l'ordre (Bebop : caméra orientée par la tête) : on tourne le vecteur.
+        var bf = f
+        var br = r
+        val ref = moveRef
+        if (!handlesViewFrame && ref != null) {
+            val dv = Math.toRadians(norm180(ref - compass()))
+            bf = f * cos(dv) - r * sin(dv)
+            br = f * sin(dv) + r * cos(dv)
+        }
         try {
-            doMove(f, r, -u, Math.toRadians(yaw), waitS)
+            doMove(bf, br, -u, Math.toRadians(yaw), waitS)
         } finally {
             movingForward = false
         }

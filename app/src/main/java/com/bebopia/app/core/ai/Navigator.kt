@@ -262,7 +262,7 @@ class Navigator(
     }
 
     private fun turnTo(bearing: Double) {
-        var left = norm180(bearing - drone.compass())
+        var left = norm180(bearing - drone.bodyCompass())
         if (abs(left) < 8) return
         if (simulation) report("(Simulation) Tourne le téléphone de ${abs(left).roundToInt()}° vers la ${if (left > 0) "droite" else "gauche"}")
         var guard = 0
@@ -271,7 +271,7 @@ class Navigator(
             val part = left.coerceIn(-drone.limits.maxYawDeg, drone.limits.maxYawDeg)
             val r = drone.move(0.0, 0.0, 0.0, part, maxStep = drone.limits.missionStepM)
             if (r.startsWith("refusé") || r.startsWith("interrompu")) throw Abort("rotation impossible : $r")
-            left = norm180(bearing - drone.compass())
+            left = norm180(bearing - drone.bodyCompass())
         }
     }
 

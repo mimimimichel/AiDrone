@@ -154,6 +154,10 @@ class Agent(
     /** Photo pour le journal de vol. */
     var onSnap: ((String) -> Unit)? = null
 
+    /** Action en cours d'exécution (pour la flèche du déplacement dans le casque). */
+    @Volatile var currentAction: Map<String, Any?>? = null
+        private set
+
     /** Action longue en cours (suivi, plan de cinéma…), pour le casque. */
     @Volatile var activity: String? = null
         private set
@@ -335,7 +339,12 @@ class Agent(
      * Action proposée par l'IA en direct (outil drone_action). Bloquant : renvoie le résultat
      * une fois l'action faite, mise en attente de ton accord, ou refusée.
      */
-    fun aiAction(action: Map<String, Any?>): String {
+    /** Note la vue au moment de l'ordre : « à droite » restera par rapport à elle, même si le pilote tourne la tête ensuite. */
+    private fun withView(action: Map<String, Any?>): Map<String, Any?> =
+        if (action["type"] == "move" && action["_vue"] == null) action + ("_vue" to drone.lookHeading()) else action
+
+    fun aiAction(actionIn: Map<String, Any?>): String {
+        val action = withView(actionIn)
         val t = action["type"] as? String ?: return "refusé : type d'action manquant"
         if (t == "land") return execute(action)
         if (returning) return "refusé : retour automatique au départ en cours, n'agis pas."
@@ -705,17 +714,18 @@ class Agent(
             return
         }
         if (confirm && t in NEEDS_CONFIRM) {
-            pending = action
+            pending = withView(action)
             lastText = "Propose : ${describe(action)}"
             changed()
             return
         }
-        execute(action)
+        execute(withView(action))
     }
 
     private fun execute(action: Map<String, Any?>): String = synchronized(execLock) {
         steps++
         val type = action["type"] as? String
+        currentAction = action
         if (type in LONG) {
             activity = describe(action)
             changed()
@@ -724,13 +734,24 @@ class Agent(
             when (action["type"] as? String) {
                 "takeoff" -> drone.takeoff()
                 "land" -> drone.land()
-                "move" -> {
-                    val (fwd, refusal) = safeForward(num(action, "forward"))
+                "move" -> try {
+                    drone.moveRef = action["_vue"] as? Double
+                    val f0 = num(action, "forward")
+                    val r0 = num(action, "right")
+                    // Vérification par l'image seulement si la caméra regarde dans la direction du déplacement
+                    // (le pilote peut regarder ailleurs avec le casque).
+                    val dist = kotlin.math.hypot(f0, r0)
+                    val motion = Math.toDegrees(kotlin.math.atan2(r0, f0))
+                    val seen = dist >= 0.15 && kotlin.math.abs(com.bebopia.app.core.norm180(motion - drone.cameraOffset())) < 35
+                    val (ok, refusal) = if (seen) safeForward(dist) else dist to null
                     if (refusal != null) refusal
                     else {
-                        val r = drone.move(fwd, num(action, "right"), num(action, "up"), num(action, "yaw"))
-                        if (fwd < num(action, "forward") - 0.01) r + " (pas raccourci à %.1f m à cause d'un obstacle)".format(fwd) else r
+                        val k = if (dist > 0) (ok / dist).coerceIn(0.0, 1.0) else 1.0
+                        val r = drone.move(f0 * k, r0 * k, num(action, "up"), num(action, "yaw"))
+                        if (k < 0.99) r + " (raccourci à %.1f m à cause d'un obstacle)".format(ok) else r
                     }
+                } finally {
+                    drone.moveRef = null
                 }
                 "tilt_camera" -> drone.tiltCamera(num(action, "degrees"))
                 "hover" -> drone.hover(num(action, "seconds", 1.0))
@@ -765,6 +786,7 @@ class Agent(
             "échec : ${e.message}"
         } finally {
             if (type in LONG) activity = null
+            currentAction = null
         }
         if (type in LONG && (result.startsWith("trouvé") || result.startsWith("arrivé"))) onSnap?.invoke(result.take(40))
         log("étape $steps : $action -> $result")
