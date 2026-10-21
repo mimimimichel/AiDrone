@@ -39,6 +39,10 @@ class FlightLog(
 
     val active: Boolean get() = flying
 
+    /** Dossier et heure de début du vol en cours (ou du dernier). */
+    val currentDir: File? get() = dir
+    val startedAt: Long get() = start
+
     /** Une ligne de la conversation ou un événement. */
     fun line(role: Role, text: String) {
         if (!flying || text.isBlank()) return

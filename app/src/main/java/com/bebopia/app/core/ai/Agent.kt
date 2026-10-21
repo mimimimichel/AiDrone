@@ -315,6 +315,10 @@ class Agent(
     private fun yesNo(text: String): Boolean {
         val norm = normalize(text)
         val words = norm.split(' ').filter { it.isNotBlank() }.toSet()
+        if (norm.contains("quand meme") && norm.contains("decoll")) {
+            onForceTakeoff?.invoke()
+            return true
+        }
         if (norm.contains("mode confiance") || norm.contains("je te fais confiance")) {
             onTrust?.invoke(true)
             return true
@@ -567,9 +571,17 @@ class Agent(
         }
     }
 
+    /** Vérification avant décollage (zones, météo) : null = OK, sinon la raison du refus. */
+    var takeoffCheck: (() -> String?)? = null
+
+    /** « Décolle quand même » : le pilote passe outre la vérification. */
+    var onForceTakeoff: (() -> Unit)? = null
+
+    private fun takeoffChecked(): String = takeoffCheck?.invoke() ?: drone.takeoff()
+
     fun humanTakeoff() {
         thread(isDaemon = true) {
-            val r = runCatching { drone.takeoff() }.getOrElse { "échec : ${it.message}" }
+            val r = runCatching { takeoffChecked() }.getOrElse { "échec : ${it.message}" }
             system(r)
         }
     }
@@ -782,7 +794,7 @@ class Agent(
         }
         val result = try {
             when (action["type"] as? String) {
-                "takeoff" -> drone.takeoff()
+                "takeoff" -> takeoffChecked()
                 "hand_launch" -> drone.handLaunch()
                 "land" -> if (drone.indoor && lander != null && drone.flying) lander!!.land() else drone.land()
                 "move" -> try {
@@ -843,7 +855,8 @@ class Agent(
                 }
                 "tilt_camera" -> drone.tiltCamera(num(action, "degrees"))
                 "hover" -> drone.hover(num(action, "seconds", 1.0))
-                "return_home" -> drone.returnHome()
+                // Dehors avec GPS : le drone rentre seul (même si la liaison coupe) ; sinon retour estimé par l'application
+                "return_home" -> (if (!drone.indoor) drone.nativeReturnHome() else null) ?: drone.returnHome()
                 "search_area" -> areaSearch?.run(
                     action["target"]?.toString() ?: "",
                     num(action, "radius_m").takeIf { it > 0 },

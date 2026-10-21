@@ -87,6 +87,14 @@ En intérieur (l'application te le dit ; elle limite alors elle-même les pas à
 - pour trouver quelque chose dans la maison (« trouve mes clés dans la maison ») : search_house, qui visite les pièces une par une
   en passant les portes ; come_back pour revenir à la pièce de départ.
 
+Avant de voler dehors, l'application vérifie seule les zones réglementées et la météo (can_i_fly pour la redemander) ;
+si c'est interdit ou trop venteux, le décollage est refusé, sauf si le pilote dit « décolle quand même ».
+Dehors avec GPS, « rentre » (return_home) fait rentrer le drone seul : il revient et se pose, même si la liaison coupe.
+« Prends une photo » : take_photo. Image trop sombre ou couleurs bizarres : camera_settings. Après l'atterrissage, les photos
+du vol sont copiées sur le téléphone ; « récupère les vidéos » : download_media avec videos = true.
+Le pilote peut aussi te parler par gestes, devant la caméra : paume ou un bras levé = stop, V ou deux bras levés = photo,
+pouce levé / baissé = oui / non, bras croisés = atterris. L'application les traite et te le signale.
+
 Résultats possibles de drone_action :
 - « en attente » : le pilote doit valider. Dis-lui en une phrase ce que tu proposes et attends.
   C'est l'application qui recueille son oui ou son non : n'appelle pas l'outil une deuxième fois pour la même action.
@@ -298,6 +306,29 @@ Les messages entre crochets [Message de l'application…] viennent de l'applicat
         mapOf(
             "name" to "come_back",
             "description" to "Après search_house : revient à la pièce de départ en repassant les portes dans l'ordre inverse.",
+        ),
+        mapOf(
+            "name" to "can_i_fly",
+            "description" to "Vérifie si on peut voler ici et maintenant : zones réglementées (carte officielle) et météo (vent, rafales, pluie, froid).",
+        ),
+        mapOf(
+            "name" to "take_photo",
+            "description" to "Prend une photo sur la carte mémoire du drone (et la range dans le journal du vol).",
+        ),
+        mapOf(
+            "name" to "camera_settings",
+            "description" to "Règle la caméra : correction d'exposition (image trop sombre ou trop claire) et balance des blancs.",
+            "parameters" to mapOf("type" to "OBJECT", "properties" to mapOf(
+                "exposure_ev" to num("Correction d'exposition en IL, de -2 à +2 (positif = plus clair). Vide = ne pas changer."),
+                "white_balance" to mapOf("type" to "STRING", "enum" to listOf("auto", "soleil", "nuageux", "incandescent", "fluorescent")),
+            )),
+        ),
+        mapOf(
+            "name" to "download_media",
+            "description" to "Drone posé : copie sur le téléphone les photos et vidéos de ce vol (rangées dans le journal du vol). Les vidéos sont longues à copier.",
+            "parameters" to mapOf("type" to "OBJECT", "properties" to mapOf(
+                "videos" to mapOf("type" to "BOOLEAN", "description" to "true pour copier aussi les vidéos (sinon seulement les photos)."),
+            )),
         ),
         mapOf(
             "name" to "drone_status",

@@ -102,6 +102,7 @@ fun MainScreen(vm: MainViewModel) {
     val context = LocalContext.current
     var showSettings by remember { mutableStateOf(false) }
     var showDiag by remember { mutableStateOf(false) }
+    var showPreflight by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
 
     fun granted(p: String) = ContextCompat.checkSelfPermission(context, p) == PackageManager.PERMISSION_GRANTED
@@ -154,6 +155,9 @@ fun MainScreen(vm: MainViewModel) {
             // Mode confiance (🤝) ou prudent (✋) : un appui pour changer
             TextButton(onClick = { vm.setTrust(s.confirm) }) {
                 Text(if (s.confirm) "✋" else "🤝", fontSize = 20.sp)
+            }
+            TextButton(onClick = { showPreflight = true }) {
+                Text(when (s.preflightVerdict) { "non" -> "⛔"; "prudence" -> "⚠️"; "ok" -> "🛫"; else -> "🛫" }, fontSize = 20.sp)
             }
             if (s.mode == Mode.MAVIC) TextButton(onClick = { showDiag = true }) { Text("🔧", fontSize = 20.sp) }
             TextButton(onClick = { showSettings = true }) { Text("⚙", fontSize = 22.sp, color = Color.White) }
@@ -339,6 +343,7 @@ fun MainScreen(vm: MainViewModel) {
 
     if (showSettings) SettingsDialog(vm, s) { showSettings = false }
     if (showDiag) MavicDiagDialog(vm) { showDiag = false }
+    if (showPreflight) PreflightDialog(vm, s) { showPreflight = false }
 }
 
 private fun statusLabel(s: UiState): String {
@@ -703,6 +708,8 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
                     )
                 }
                 SettingSwitch("🎮 Manettes du casque : « avant » suit mon regard (sinon : regard libre, cap de vol fixé au manche)", s.sticksFollowLook) { vm.changeSticksMode(it) }
+                SettingSwitch("🤚 Gestes devant la caméra (paume = stop, V = photo, pouce = oui/non, bras croisés = atterris)", s.gesturesOn) { vm.changeGestures(it) }
+                SettingSwitch("📥 Après l'atterrissage, copier aussi les vidéos (sinon seulement les photos)", s.mediaVideos) { vm.changeMediaVideos(it) }
                 SettingSwitch("Le drone parle à voix haute", speak) { speak = it }
                 SettingSwitch("Voix de robot", robotVoice) { robotVoice = it }
                 SettingSwitch("🎬 Filmer chaque vol en entier (carte mémoire du drone)", s.autoRecord) { vm.changeAutoRecord(it) }
@@ -735,6 +742,33 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 8.dp),
                 )
+            }
+        },
+    )
+}
+
+/** « Est-ce que je peux voler ici ? » : zones réglementées et météo, là où tu es. */
+@Composable
+private fun PreflightDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit) {
+    var busy by remember { mutableStateOf(false) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    fun check() {
+        busy = true
+        scope.launch { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { vm.runPreflight() }; busy = false }
+    }
+    LaunchedEffect(Unit) { if (s.preflightText == null) check() }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("🛫 Puis-je voler ici ?") },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Fermer") } },
+        dismissButton = { TextButton(onClick = { check() }, enabled = !busy) { Text("Revérifier") } },
+        text = {
+            Column {
+                if (busy) CircularProgressIndicator()
+                Text(s.preflightText ?: "Vérification…", fontSize = 15.sp)
+                Text("Zones : carte officielle des restrictions pour les drones de loisir (IGN). Météo : Open-Meteo. " +
+                    "Vérifie aussi les règles locales (parcs, arrêtés municipaux) et vole toujours à vue.",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
             }
         },
     )
@@ -846,6 +880,21 @@ private fun JournalDialog(vm: MainViewModel, onDismiss: () -> Unit) {
                         Column(Modifier.padding(vertical = 8.dp)) {
                             Text(f.title, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                             Text(f.summary, fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp))
+                            val videos = f.dir.listFiles { x -> x.name.endsWith(".mp4", true) || x.name.endsWith(".mov", true) }?.sortedBy { it.name }.orEmpty()
+                            if (videos.isNotEmpty()) {
+                                val ctx = LocalContext.current
+                                Row(Modifier.horizontalScroll(rememberScrollState()).padding(top = 4.dp)) {
+                                    videos.forEach { v ->
+                                        OutlinedButton(onClick = {
+                                            runCatching {
+                                                val uri = androidx.core.content.FileProvider.getUriForFile(ctx, ctx.packageName + ".files", v)
+                                                ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW).setDataAndType(uri, "video/*")
+                                                    .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                                            }
+                                        }, modifier = Modifier.padding(end = 4.dp)) { Text("▶ " + v.name.takeLast(18), fontSize = 11.sp) }
+                                    }
+                                }
+                            }
                             if (f.photos.isNotEmpty()) {
                                 Row(Modifier.horizontalScroll(rememberScrollState()).padding(top = 6.dp)) {
                                     f.photos.take(12).forEach { file ->

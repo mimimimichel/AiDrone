@@ -225,6 +225,23 @@ abstract class DroneBase(val limits: Limits) {
         heading = norm180(heading + yawDeg * dtS)
     }
 
+    // ---- fonctions propres au drone (retour géré par lui-même, photo, caméra, médias) ----------------
+    /** Retour au départ géré par le drone (GPS) : il rentre et se pose seul. null = pas disponible ici. */
+    open fun nativeReturnHome(): String? = null
+
+    /** Si la liaison est perdue, le drone rentre seul à [heightM] mètres. null = réglé, sinon la raison. */
+    open fun setupFailsafe(heightM: Int): String? = "non disponible sur ce drone"
+
+    /** Photo sur la carte du drone. null = prise, sinon la raison. */
+    open fun takePhoto(): String? = "photo non disponible sur ce drone"
+
+    /** Réglages caméra : correction d'exposition (IL) et balance des blancs (auto, soleil, nuageux, incandescent, fluorescent). */
+    open fun cameraSettings(ev: Double?, whiteBalance: String?): String = "réglages caméra non disponibles sur ce drone"
+
+    /** Copie sur le téléphone les photos (et vidéos) prises depuis [sinceMs]. Bloquant. */
+    open fun downloadMedia(sinceMs: Long, videos: Boolean, dir: java.io.File, progress: (String) -> Unit): String =
+        "récupération des photos et vidéos non disponible sur ce drone"
+
     /** Démarre / arrête l'enregistrement vidéo sur le drone. null = réussi, sinon la raison. */
     open fun startRecording(): String? = "enregistrement vidéo non disponible sur ce drone"
     open fun stopRecording(): String? = null

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fichiers du journal de vol (photos, vidéos) que l'application peut ouvrir dans une autre application -->
+<paths>
+    <files-path name="vols" path="vols/" />
+</paths>

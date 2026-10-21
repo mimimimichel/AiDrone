@@ -11,7 +11,7 @@ import java.util.concurrent.TimeUnit
 /** Le vrai Parrot Bebop 2 / Bebop 2 Power, piloté par le protocole ARSDK3. */
 class BebopDrone(
     limits: Limits,
-    binder: SocketBinder,
+    private val binder: SocketBinder,
     private val log: (String) -> Unit,
     host: String = ArNetwork.DEFAULT_HOST,
 ) : DroneBase(limits) {
@@ -94,9 +94,6 @@ class BebopDrone(
         net.sendWithAck(BebopCmd.emergency(), buffer = Ar.BUF_EMERGENCY, retries = 8)
     }
 
-    override fun doCancelMove() {
-        net.sendWithAck(BebopCmd.cancelMoveBy())
-    }
 
     override fun doMove(forward: Double, right: Double, down: Double, yawRad: Double, waitS: Double) {
         moveEnds.clear()
@@ -175,6 +172,37 @@ class BebopDrone(
     }
 
     override fun lookHeading(): Double = com.bebopia.app.core.norm180(compass() + if (headRecent) notedHeadYaw.coerceIn(-35.0, 35.0) else 0.0)
+
+    override fun nativeReturnHome(): String? {
+        if (!flying) return null
+        if (!net.sendWithAck(BebopCmd.navigateHome(true))) return "le Bebop n'a pas reçu l'ordre de retour"
+        log("retour au départ géré par le Bebop")
+        return "retour au départ lancé : le Bebop rentre seul au point de départ (GPS), même si la liaison coupe. Dis « stop » pour l'arrêter"
+    }
+
+    override fun doCancelMove() {
+        net.sendWithAck(BebopCmd.cancelMoveBy())
+        net.send(BebopCmd.navigateHome(false))
+    }
+
+    override fun takePhoto(): String? = if (net.sendWithAck(BebopCmd.picture())) null else "le Bebop n'a pas reçu l'ordre"
+
+    override fun cameraSettings(ev: Double?, whiteBalance: String?): String {
+        val out = ArrayList<String>()
+        ev?.let { v ->
+            val c = v.coerceIn(-1.5, 1.5)
+            out.add(if (net.sendWithAck(BebopCmd.exposure(c.toFloat()))) "exposition %+.1f".format(c) else "exposition non reçue")
+        }
+        whiteBalance?.let { w ->
+            val m = when (w) { "incandescent" -> 1; "fluorescent" -> 2; "soleil" -> 3; "nuageux" -> 4; else -> 0 }
+            out.add(if (net.sendWithAck(BebopCmd.whiteBalance(m))) "balance des blancs : $w" else "balance des blancs non reçue")
+        }
+        return out.joinToString(", ").ifEmpty { "rien à régler" }
+    }
+
+    override fun downloadMedia(sinceMs: Long, videos: Boolean, dir: java.io.File, progress: (String) -> Unit): String =
+        runCatching { BebopMedia(ArNetwork.DEFAULT_HOST, binder).download(sinceMs, videos, dir, progress) }
+            .getOrElse { "copie impossible : ${it.message}" }
 
     override fun handLaunch(): String {
         if (flying) return "déjà en vol"

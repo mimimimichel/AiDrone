@@ -253,6 +253,161 @@ public class DjiLink {
         return b.toString();
     }
 
+    // ---- retour au départ géré par le drone, photo, réglages caméra, médias --------------------
+    /** Retour au départ par le drone lui-même (GPS) : il rentre et se pose, même si la liaison coupe. */
+    public void goHome(boolean start, Done d) {
+        FlightController f = fc();
+        if (noFc(f, d)) return;
+        if (start) f.startGoHome(cb(d)); else f.cancelGoHome(cb(d));
+    }
+
+    public boolean goingHome() {
+        String m = flightMode.toUpperCase(java.util.Locale.ROOT).replace(" ", "").replace("_", "");
+        return m.contains("GOHOME") || m.contains("RTH");
+    }
+
+    /** Si la liaison est perdue : le drone rentre seul, à [heightM] mètres (20 à 120). */
+    public void failsafeGoHome(final int heightM, final Done d) {
+        final FlightController f = fc();
+        if (noFc(f, d)) return;
+        f.setConnectionFailSafeBehavior(dji.common.flightcontroller.ConnectionFailSafeBehavior.GO_HOME, new CommonCallbacks.CompletionCallback() {
+            @Override
+            public void onResult(DJIError e1) {
+                f.setGoHomeHeightInMeters(Math.max(20, Math.min(120, heightM)), cb(new Done() {
+                    @Override
+                    public void done(String e2) { if (d != null) d.done(e1 != null ? e1.getDescription() : e2); }
+                }));
+            }
+        });
+    }
+
+    private dji.sdk.camera.Camera camera() {
+        BaseProduct p = DJISDKManager.getInstance().getProduct();
+        return p == null ? null : p.getCamera();
+    }
+
+    /** Photo sur la carte du drone, puis retour en mode vidéo. */
+    public void shootPhoto(final Done d) {
+        final dji.sdk.camera.Camera cam = camera();
+        if (cam == null) { if (d != null) d.done("caméra indisponible"); return; }
+        final CommonCallbacks.CompletionCallback shoot = new CommonCallbacks.CompletionCallback() {
+            @Override
+            public void onResult(DJIError e0) {
+                cam.startShootPhoto(cb(new Done() {
+                    @Override
+                    public void done(String e) {
+                        // Retour en mode vidéo un peu plus tard (la photo s'enregistre)
+                        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(new Runnable() {
+                            @Override
+                            public void run() {
+                                cam.setFlatMode(SettingsDefinitions.FlatCameraMode.VIDEO_NORMAL, new CommonCallbacks.CompletionCallback() {
+                                    @Override
+                                    public void onResult(DJIError x) { if (x != null) cam.setMode(SettingsDefinitions.CameraMode.RECORD_VIDEO, null); }
+                                });
+                            }
+                        }, 2500);
+                        if (d != null) d.done(e);
+                    }
+                }));
+            }
+        };
+        cam.setFlatMode(SettingsDefinitions.FlatCameraMode.PHOTO_SINGLE, new CommonCallbacks.CompletionCallback() {
+            @Override
+            public void onResult(DJIError e) {
+                if (e == null) shoot.onResult(null);
+                else cam.setMode(SettingsDefinitions.CameraMode.SHOOT_PHOTO, shoot);
+            }
+        });
+    }
+
+    /** Correction d'exposition (en IL, de -3 à +3) : la valeur la plus proche que la caméra connaît. */
+    public void exposure(double ev, Done d) {
+        dji.sdk.camera.Camera cam = camera();
+        if (cam == null) { if (d != null) d.done("caméra indisponible"); return; }
+        SettingsDefinitions.ExposureCompensation best = null;
+        double bestDiff = 99;
+        for (SettingsDefinitions.ExposureCompensation c : SettingsDefinitions.ExposureCompensation.values()) {
+            String n = c.name();
+            if (!(n.startsWith("N_") || n.startsWith("P_"))) continue;
+            try {
+                String[] parts = n.substring(2).split("_");
+                double v = Double.parseDouble(parts[0] + "." + parts[1]) * (n.startsWith("N_") ? -1 : 1);
+                if (Math.abs(v - ev) < bestDiff) { bestDiff = Math.abs(v - ev); best = c; }
+            } catch (Exception ignored) { }
+        }
+        if (best == null) { if (d != null) d.done("valeur inconnue"); return; }
+        cam.setExposureMode(SettingsDefinitions.ExposureMode.PROGRAM, null);
+        cam.setExposureCompensation(best, cb(d));
+    }
+
+    /** Balance des blancs : auto, soleil, nuageux, incandescent, fluorescent. */
+    public void whiteBalance(String preset, Done d) {
+        dji.sdk.camera.Camera cam = camera();
+        if (cam == null) { if (d != null) d.done("caméra indisponible"); return; }
+        SettingsDefinitions.WhiteBalancePreset p;
+        switch (preset) {
+            case "soleil": p = SettingsDefinitions.WhiteBalancePreset.SUNNY; break;
+            case "nuageux": p = SettingsDefinitions.WhiteBalancePreset.CLOUDY; break;
+            case "incandescent": p = SettingsDefinitions.WhiteBalancePreset.INDOOR_INCANDESCENT; break;
+            case "fluorescent": p = SettingsDefinitions.WhiteBalancePreset.INDOOR_FLUORESCENT; break;
+            default: p = SettingsDefinitions.WhiteBalancePreset.AUTO;
+        }
+        cam.setWhiteBalance(new dji.common.camera.WhiteBalance(p), cb(d));
+    }
+
+    public interface MediaDone { void progress(String message); void done(int count, String error); }
+
+    /**
+     * Copie sur le téléphone les photos (et vidéos si [videos]) prises depuis [sinceMs], dans [dir].
+     * Drone posé. La caméra passe en mode « téléchargement » le temps de la copie.
+     */
+    public void downloadMedia(final long sinceMs, final boolean videos, final java.io.File dir, final MediaDone cb) {
+        final dji.sdk.camera.Camera cam = camera();
+        if (cam == null || cam.getMediaManager() == null) { cb.done(0, "lecture de la carte du drone non disponible"); return; }
+        final dji.sdk.media.MediaManager mm = cam.getMediaManager();
+        cam.setMode(SettingsDefinitions.CameraMode.MEDIA_DOWNLOAD, new CommonCallbacks.CompletionCallback() {
+            @Override
+            public void onResult(DJIError e0) {
+                mm.refreshFileListOfStorageLocation(SettingsDefinitions.StorageLocation.SDCARD, new CommonCallbacks.CompletionCallback() {
+                    @Override
+                    public void onResult(DJIError e1) {
+                        if (e1 != null) { back(cam); cb.done(0, "liste des fichiers impossible : " + e1.getDescription()); return; }
+                        java.util.List<dji.sdk.media.MediaFile> all = mm.getSDCardFileListSnapshot();
+                        final java.util.ArrayList<dji.sdk.media.MediaFile> todo = new java.util.ArrayList<>();
+                        if (all != null) for (dji.sdk.media.MediaFile m : all) {
+                            boolean video = m.getMediaType() == dji.sdk.media.MediaFile.MediaType.MP4 || m.getMediaType() == dji.sdk.media.MediaFile.MediaType.MOV;
+                            boolean photo = m.getMediaType() == dji.sdk.media.MediaFile.MediaType.JPEG;
+                            if ((photo || (video && videos)) && m.getTimeCreated() >= sinceMs) todo.add(m);
+                        }
+                        if (todo.isEmpty()) { back(cam); cb.done(0, null); return; }
+                        next(cam, todo, 0, dir, cb);
+                    }
+                });
+            }
+        });
+    }
+
+    private void next(final dji.sdk.camera.Camera cam, final java.util.List<dji.sdk.media.MediaFile> todo, final int i, final java.io.File dir, final MediaDone cb) {
+        if (i >= todo.size()) { back(cam); cb.done(todo.size(), null); return; }
+        final dji.sdk.media.MediaFile m = todo.get(i);
+        String name = m.getFileName();
+        int dot = name.lastIndexOf('.');
+        final String base = dot > 0 ? name.substring(0, dot) : name;
+        cb.progress("📥 " + (i + 1) + "/" + todo.size() + " : " + name);
+        m.fetchFileData(dir, base, new dji.sdk.media.DownloadListener<String>() {
+            @Override public void onStart() { }
+            @Override public void onRateUpdate(long total, long current, long persize) { }
+            @Override public void onRealtimeDataUpdate(byte[] data, long position, boolean isLastPack) { }
+            @Override public void onProgress(long total, long current) { }
+            @Override public void onSuccess(String path) { next(cam, todo, i + 1, dir, cb); }
+            @Override public void onFailure(DJIError e) { cb.progress("échec pour " + m.getFileName() + " : " + e.getDescription()); next(cam, todo, i + 1, dir, cb); }
+        });
+    }
+
+    private void back(dji.sdk.camera.Camera cam) {
+        cam.setMode(SettingsDefinitions.CameraMode.RECORD_VIDEO, null);
+    }
+
     // ---- diagnostic et réglages avant décollage ------------------------------------------------
     public interface BoolDone { void done(Boolean value, String error); }
 

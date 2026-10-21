@@ -123,6 +123,14 @@ object BebopCmd {
     fun moveBy(dx: Float, dy: Float, dz: Float, dPsi: Float) =
         cmd(1, 0, 7, ArArgs().f32(dx).f32(dy).f32(dz).f32(dPsi))
     fun cancelMoveBy() = cmd(1, 0, 14)
+    /** Retour au départ géré par le Bebop (GPS) : 1 = démarrer, 0 = arrêter. */
+    fun navigateHome(start: Boolean) = cmd(1, 0, 5, ArArgs().u8(if (start) 1 else 0))
+    /** Photo (MediaRecord.PictureV2). */
+    fun picture() = cmd(1, 7, 2)
+    /** Correction d'exposition, de -1,5 à +1,5 (PictureSettings.ExpositionSelection). */
+    fun exposure(ev: Float) = cmd(1, 19, 2, ArArgs().f32(ev))
+    /** Balance des blancs : 0 auto, 1 tungstène, 2 fluorescent, 3 soleil, 4 nuageux (PictureSettings.AutoWhiteBalanceSelection). */
+    fun whiteBalance(mode: Int) = cmd(1, 19, 1, ArArgs().i32(mode))
     /** Décollage lancé : 1 = moteurs prêts, le drone part quand on le lance ; 0 = annuler. */
     fun userTakeOff(on: Boolean) = cmd(1, 0, 9, ArArgs().u8(if (on) 1 else 0))
     /** Pilotage aux manches : flag (1 = roulis/tangage actifs), roulis, tangage, lacet, gaz en % (-100 à 100). */

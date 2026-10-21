@@ -129,6 +129,14 @@ Par défaut (✋ **mode prudent**), l'IA te demande ton accord avant chaque dép
 - **Journal de vol** (⚙ → Journal des vols) : chaque vol, du décollage à l'atterrissage, avec la conversation, la trace, des photos (points marqués, cibles trouvées, une toutes les 2 minutes) et un résumé écrit par l'IA.
 - **Mémoire de l'IA** : elle retient ce qui sera utile plus tard (« la tulipe est sur le rebord de la fenêtre »), ou ce que tu lui dis de retenir, ainsi que le résumé de chaque vol. Elle s'en sert dans les conversations suivantes. Elle s'efface dans ⚙.
 
+## Sécurité, photo, gestes (repris des applis DJI, Parrot, Skydio…)
+
+- **🛫 Puis-je voler ici ?** (bouton en haut, ou demande-le à l'IA) : zones réglementées d'après la carte officielle des restrictions pour les drones de loisir (IGN : vol interdit, hauteur maximale) et météo du moment (vent, rafales, pluie, froid). Fait tout seul quand tu es dehors. Si la zone limite la hauteur, le plafond de l'app suit. Si c'est interdit ou trop venteux, le décollage est refusé, sauf si tu dis « décolle quand même ».
+- **Retour au départ géré par le drone** : dehors avec GPS, « rentre » fait rentrer le drone seul (il revient et se pose), même si la liaison coupe. Et si la liaison est perdue, le Mavic rentre seul à 20–30 m de haut (réglé automatiquement).
+- **Photo à la voix** (« prends une photo ») sur la carte du drone, plus une copie dans le journal ; **réglages caméra** (exposition, balance des blancs : « l'image est trop sombre »).
+- **Photos et vidéos récupérées** : après l'atterrissage, les photos du vol sont copiées sur le téléphone, dans le journal (les vidéos aussi si tu l'actives dans ⚙, ou « récupère les vidéos »). Mavic : depuis sa carte SD ; Bebop : par son serveur FTP. Dans le journal, ▶ ouvre une vidéo.
+- **Gestes devant la caméra** (sans Internet) : ✋ paume ou un bras levé = stop ; ✌️ V ou deux bras levés = photo (compte à rebours de 3 s) ; 👍 / 👎 = oui / non à la proposition de l'IA ; bras croisés en X = atterris. Un geste doit être tenu environ une seconde, puis 4 s de pause avant le suivant. Désactivables dans ⚙.
+
 ## Regarder avant d'agir, et l'intérieur
 
 - **Repérage** (« regarde autour de toi », ou de lui-même avant un plan) : le drone fait un tour complet sur place (8 vues en intérieur, 6 dehors) puis regarde sous lui. Chaque vue est analysée : portes et passages (ouverts ou fermés, largeur), murs, meubles, obstacles, personnes, place libre dans chaque direction, plafond, hauteur libre dessous, et l'objet cherché. Tout est rangé dans une **mémoire de la scène** que l'IA utilise pour planifier, et qui s'affiche sur la carte du casque (zone verte = place libre, rectangles violets = portes, étoile rouge = cible). S'il lui manque une information (ce qu'il y a dessous, derrière une porte), l'IA va la chercher avant d'agir. Dehors, elle peut monter de quelques mètres pour voir plus loin.

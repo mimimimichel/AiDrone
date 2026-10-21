@@ -109,6 +109,12 @@ data class UiState(
     /** auto, interieur ou exterieur */
     val envMode: String = "auto",
     val sticksFollowLook: Boolean = false,
+    val preflightVerdict: String? = null,
+    val preflightText: String? = null,
+    val gesturesOn: Boolean = true,
+    val mediaVideos: Boolean = false,
+    /** Geste reconnu (ou en cours), pour l'affichage. */
+    val gesture: String? = null,
 )
 
 /** Un point du diagnostic du Mavic : état (ok / attention / bloquant), titre, explication. */
@@ -266,6 +272,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         startDisplayGain()
         startNavTicks()
         startTargetPreview()
+        startGestures()
         voice.init()
         voice.speakEnabled = speak
         voice.robot = robotVoice
@@ -347,6 +354,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             indoor = d?.indoor ?: false,
             envMode = envMode,
             sticksFollowLook = sticksFollowLook,
+            preflightVerdict = lastPreflight?.verdict,
+            preflightText = lastPreflight?.text,
+            gesturesOn = gesturesOn,
+            mediaVideos = mediaVideos,
+            gesture = gestureLabel(),
         )
     }
 
@@ -432,6 +444,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     @Volatile private var nav: Navigator? = null
     @Volatile private var scene: com.bebopia.app.core.ai.SceneMemory? = null
     @Volatile private var wasFlyingTick = false
+    @Volatile private var failsafeSet = false
+    @Volatile private var preflightTried = false
     @Volatile private var localDetector: com.bebopia.app.android.LocalDetector? = null
     @Volatile private var flightLog: FlightLog? = null
     @Volatile private var weakSignalSince = 0L
@@ -447,6 +461,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (questActive && System.currentTimeMillis() - questLastActive > 1000) questActive = false
                 // Nouveau vol : la mémoire de la scène repart de zéro ; fin de vol : le plan des pièces va dans la mémoire de l'IA
                 if (d.flying && !wasFlyingTick) scene?.clear()
+                if (!d.flying && wasFlyingTick) thread(isDaemon = true) {
+                    Thread.sleep(8000) // le journal se ferme, le drone se pose bien
+                    if (drone === d && !d.flying) downloadMedia(mediaVideos)
+                }
+                // Dehors : vérification de la zone et de la météo, une fois par connexion
+                if (!d.indoor && !preflightTried && mode != Mode.SIM) {
+                    preflightTried = true
+                    thread(isDaemon = true) { runCatching { runPreflight() } }
+                }
+                // Dehors avec GPS : si la liaison est perdue, le drone rentre seul (au moins 20 m de haut pour passer les arbres)
+                if (!d.indoor && d.hasGps && !failsafeSet) {
+                    failsafeSet = true
+                    thread(isDaemon = true) {
+                        val h = limits.maxAltitudeM.toInt().coerceIn(20, 30)
+                        d.setupFailsafe(h)?.let { e -> if (!e.startsWith("non disponible")) sysMessage("Réglage du retour automatique refusé : $e") }
+                            ?: sysMessage("🏠 Si la liaison est perdue, le drone rentre seul au point de départ (à $h m de haut).")
+                    }
+                }
                 if (!d.flying && wasFlyingTick) scene?.roomsSummary()?.takeIf { it.isNotBlank() && (scene?.roomCount() ?: 0) >= 1 }?.let { plan ->
                     memory.add("Plan des pièces repéré pendant le vol (depuis le point de décollage) : $plan", d.homeGps() ?: d.gps())
                 }
@@ -626,6 +658,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         a.onEvent = { text, reply -> live?.takeIf { it.active }?.event(text, reply) }
         a.onTrust = { on -> setTrust(on) }
+        a.takeoffCheck = { takeoffGate(d) }
+        a.onForceTakeoff = { forceTakeoff() }
         a.onHandBack = { handBack() }
         agentEyes = eyes
         synchronized(localChat) {
@@ -797,6 +831,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         video = null
         nav = null
         scene = null
+        failsafeSet = false
+        preflightTried = false
         flightLog = null
         localDetector?.let { ld -> thread(isDaemon = true) { ld.close() } }
         localDetector = null
@@ -883,6 +919,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         live?.sendFrameNow()
                         mapOf("result" to r, "etat" to d.state())
                     }
+                    "can_i_fly" -> mapOf("result" to runPreflight().text)
+                    "take_photo" -> mapOf("result" to photoNow())
+                    "camera_settings" -> {
+                        val ev = (args["exposure_ev"] as? Number)?.toDouble()
+                        val wb = args["white_balance"] as? String
+                        val r = runCatching { d.cameraSettings(ev, wb) }.getOrElse { "échec : ${it.message}" }
+                        a.addChat(Role.SYSTEM, "🎛 Caméra : $r")
+                        mapOf("result" to r)
+                    }
+                    "download_media" -> mapOf("result" to downloadMedia(args["videos"] == true))
                     "survey", "pass_door", "search_house", "come_back" -> {
                         val action = when (name) {
                             "survey" -> mapOf("type" to "survey", "target" to args["target"], "climb_m" to args["climb_m"])
@@ -1194,6 +1240,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .put("rec", s.recording)
             .put("sticks", questActive)
             .put("headPaused", d?.headPaused == true)
+            .put("preflight", clean(s.preflightVerdict))
+            .put("gesture", clean(s.gesture))
             .put("sticksMode", if (sticksFollowLook) "regard" else "libre")
             .put("indoor", s.indoor)
             .put("scene", runCatching { scene?.mapJson() }.getOrNull() ?: org.json.JSONObject.NULL)
@@ -1276,6 +1324,144 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             d.space?.allowed(bearing, p)?.let { free -> if (free < 0.3) { f = 0.0; r = 0.0 } }
         }
         runCatching { d.sticks(f, r, u, yaw) }
+    }
+
+    // ---- « Est-ce que je peux voler ici ? » (zones + météo) ----------------------------------------
+    @Volatile var lastPreflight: com.bebopia.app.core.ai.PreflightReport? = null
+        private set
+    @Volatile private var preflightAt: Pair<Double, Double>? = null
+    @Volatile private var forceTakeoffUntil = 0L
+    private val preflight = com.bebopia.app.core.ai.Preflight { url ->
+        val c = router.openApi(java.net.URL(url))
+        try {
+            c.connectTimeout = 10_000; c.readTimeout = 15_000
+            c.setRequestProperty("User-Agent", "BebopIA")
+            c.inputStream.bufferedReader().use { it.readText() }
+        } finally { c.disconnect() }
+    }
+
+    /** Vérifie la zone et la météo là où est le pilote (ou le drone). Bloquant. */
+    fun runPreflight(): com.bebopia.app.core.ai.PreflightReport {
+        val d = drone
+        val here = d?.gps() ?: pilotLat.takeIf { !it.isNaN() }?.let { it to pilotLon }
+            ?: return com.bebopia.app.core.ai.PreflightReport("prudence",
+                "⚠️ Pas de position GPS (ni téléphone ni drone) : impossible de vérifier les zones et la météo. Active la localisation du téléphone.", null, null, null)
+                .also { lastPreflight = it; refresh() }
+        val maxWind = when (mode) { Mode.BEBOP -> 10.0; else -> 8.0 }
+        val r = preflight.check(here.first, here.second, d?.name ?: "drone", maxWind)
+        lastPreflight = r
+        preflightAt = here
+        // Hauteur limitée par la zone : le plafond suit
+        r.maxHeightM?.let { h ->
+            if (h in 1 until limits.maxAltitudeM.toInt() && d?.indoor != true) {
+                limits.maxAltitudeM = h.toDouble()
+                d?.let { thread(isDaemon = true) { runCatching { it.applyLimits() } } }
+                sysMessage("📐 Plafond abaissé à $h m : c'est la limite de cette zone.")
+            }
+        }
+        sysMessage("🛫 ${r.text}")
+        refresh()
+        return r
+    }
+
+    private fun preflightFresh(): Boolean {
+        val r = lastPreflight ?: return false
+        val at = preflightAt ?: return false
+        val here = drone?.gps() ?: pilotLat.takeIf { !it.isNaN() }?.let { it to pilotLon } ?: return true
+        val moved = kotlin.math.hypot((here.first - at.first) * 111320, (here.second - at.second) * 78000)
+        return System.currentTimeMillis() - r.at < 15 * 60_000 && moved < 300
+    }
+
+    /** Avant chaque décollage dehors : refus si zone interdite ou météo dangereuse (« décolle quand même » pour passer outre). */
+    private fun takeoffGate(d: DroneBase): String? {
+        if (d.indoor || System.currentTimeMillis() < forceTakeoffUntil) return null
+        val r = if (preflightFresh()) lastPreflight!! else runPreflight()
+        return if (r.verdict == "non") "refusé : ${r.text} Dis « décolle quand même » pour passer outre." else null
+    }
+
+    fun forceTakeoff() {
+        forceTakeoffUntil = System.currentTimeMillis() + 60_000
+        sysMessage("⚠️ Décollage forcé par le pilote, malgré la vérification.")
+        agent?.humanTakeoff()
+    }
+
+    // ---- gestes devant la caméra ---------------------------------------------------------------------
+    var gesturesOn: Boolean
+        get() = prefs.getBoolean("gestures", true)
+        private set(v) = prefs.edit().putBoolean("gestures", v).apply()
+    var mediaVideos: Boolean
+        get() = prefs.getBoolean("media_videos", false)
+        private set(v) = prefs.edit().putBoolean("media_videos", v).apply()
+    fun changeGestures(on: Boolean) { gesturesOn = on; refresh() }
+    fun changeMediaVideos(on: Boolean) { mediaVideos = on; refresh() }
+
+    private val gestureWatcher by lazy { com.bebopia.app.android.GestureWatcher(getApplication()) }
+    private val gestures = com.bebopia.app.core.vision.GestureInterpreter()
+    @Volatile private var gestureShown: Pair<String, Long>? = null
+
+    private fun gestureLabel(): String? {
+        gestures.progress?.let { (g, k) -> return g.label + " " + "▮".repeat((k * 5).toInt()) + "▯".repeat(5 - (k * 5).toInt()) }
+        return gestureShown?.takeIf { System.currentTimeMillis() - it.second < 3000 }?.first
+    }
+
+    private fun startGestures() {
+        viewModelScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(250)
+                val d = drone ?: continue
+                if (!gesturesOn || !(d.flying || mode == Mode.SIM) || agent == null) continue
+                val bmp = kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    runCatching {
+                        if (mode == Mode.SIM) previewView?.bitmap?.let { android.graphics.Bitmap.createScaledBitmap(it, 640, 640 * it.height / it.width, true) }
+                        else textureView?.takeIf { it.isAvailable }?.getBitmap(640, 360)
+                    }.getOrNull()
+                } ?: continue
+                val (hand, pose) = runCatching { gestureWatcher.analyze(bmp) }.getOrDefault(null to null)
+                bmp.recycle()
+                val g = gestures.update(System.currentTimeMillis(), hand, pose) ?: continue
+                onGesture(g)
+            }
+        }
+    }
+
+    private fun onGesture(g: com.bebopia.app.core.vision.Gesture) {
+        val a = agent ?: return
+        gestureShown = g.label to System.currentTimeMillis()
+        sysMessage("🤚 Geste reconnu : ${g.label}")
+        live?.takeIf { it.active }?.event("Le pilote a fait un geste devant la caméra : ${g.label}. L'application s'en occupe.", false)
+        when (g) {
+            com.bebopia.app.core.vision.Gesture.STOP -> a.stopNow()
+            com.bebopia.app.core.vision.Gesture.LAND -> a.humanLand()
+            com.bebopia.app.core.vision.Gesture.YES -> if (a.pending != null) a.approve() else a.approvePlan()
+            com.bebopia.app.core.vision.Gesture.NO -> if (a.pending != null) a.reject() else a.rejectPlan()
+            com.bebopia.app.core.vision.Gesture.PHOTO -> thread(isDaemon = true) {
+                speaker.say("Photo dans 3, 2, 1.")
+                Thread.sleep(3000)
+                photoNow()
+            }
+        }
+    }
+
+    /** Photo sur la carte du drone + copie de l'image vidéo dans le journal. */
+    fun photoNow(): String {
+        val d = drone ?: return "pas de drone"
+        thread(isDaemon = true) { flightLog?.snap("photo") }
+        val r = runCatching { d.takePhoto() }.getOrElse { it.message }
+        val msg = if (r == null) "📸 Photo prise" else "📸 Photo enregistrée dans le journal (sur le drone : $r)"
+        sysMessage(msg)
+        return msg
+    }
+
+    /** Copie des photos (et vidéos) du vol sur le téléphone, dans le journal. Bloquant. */
+    fun downloadMedia(videos: Boolean): String {
+        val d = drone ?: return "pas de drone"
+        val log = flightLog ?: return "journal indisponible"
+        val dir = log.currentDir ?: return "aucun vol enregistré"
+        if (d.flying) return "refusé : pose le drone d'abord"
+        sysMessage("📥 Copie des ${if (videos) "photos et vidéos" else "photos"} du vol sur le téléphone…")
+        val r = runCatching { d.downloadMedia(log.startedAt - 60_000, videos, dir) { sysMessage(it) } }.getOrElse { "échec : ${it.message}" }
+        sysMessage("📥 $r")
+        return r
     }
 
     /** Mode des manettes : regard libre (false) ou suit le regard (true). */

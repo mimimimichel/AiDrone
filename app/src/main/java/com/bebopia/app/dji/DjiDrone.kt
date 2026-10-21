@@ -198,6 +198,56 @@ class DjiDrone(
     }
 
     override fun signalQuality(): Int? = link.signalQuality().takeIf { it >= 0 }
+
+    @Volatile private var homing = false
+
+    override fun nativeReturnHome(): String? {
+        if (!hasGps || !link.flying()) return null
+        val err = call(8) { link.goHome(true, it) }
+        if (err != null) return "le drone refuse de rentrer seul : $err"
+        homing = true
+        log("retour au départ géré par le drone")
+        try {
+            // Il rentre, puis se pose au point de départ
+            val end = System.currentTimeMillis() + 6 * 60_000
+            while (System.currentTimeMillis() < end && link.flying() && homing) {
+                Thread.sleep(500)
+                if (link.landingConfirmationNeeded()) call(5) { link.confirmLanding(it) }
+            }
+        } finally {
+            val was = homing
+            homing = false
+            if (was && link.flying()) call(5) { link.goHome(false, it) }
+        }
+        return if (!link.flying()) "revenu au départ et posé (retour géré par le drone)" else "retour au départ interrompu : je reste sur place"
+    }
+
+    override fun setupFailsafe(heightM: Int): String? = call(8) { link.failsafeGoHome(heightM, it) }
+
+    override fun takePhoto(): String? = call(8) { link.shootPhoto(it) }
+
+    override fun cameraSettings(ev: Double?, whiteBalance: String?): String {
+        val out = ArrayList<String>()
+        ev?.let { v -> out.add(call(6) { link.exposure(v, it) }?.let { e -> "exposition refusée ($e)" } ?: "exposition %+.1f".format(v)) }
+        whiteBalance?.let { w -> out.add(call(6) { link.whiteBalance(w, it) }?.let { e -> "balance des blancs refusée ($e)" } ?: "balance des blancs : $w") }
+        return out.joinToString(", ").ifEmpty { "rien à régler" }
+    }
+
+    override fun downloadMedia(sinceMs: Long, videos: Boolean, dir: java.io.File, progress: (String) -> Unit): String {
+        if (link.flying()) return "refusé : pose le drone d'abord"
+        dir.mkdirs()
+        val latch = CountDownLatch(1)
+        var result = "pas de réponse du drone"
+        link.downloadMedia(sinceMs, videos, dir, object : DjiLink.MediaDone {
+            override fun progress(message: String) = progress(message)
+            override fun done(count: Int, error: String?) {
+                result = error ?: if (count == 0) "aucune photo ni vidéo de ce vol sur la carte du drone" else "$count fichier(s) copié(s) sur le téléphone"
+                latch.countDown()
+            }
+        })
+        latch.await(30, TimeUnit.MINUTES)
+        return result
+    }
     override val recording: Boolean get() = link.recording()
     override fun startRecording(): String? = call(8) { link.record(true, it) }
     override fun stopRecording(): String? = call(5) { link.record(false, it) }
@@ -329,6 +379,7 @@ class DjiDrone(
 
     override fun doCancelMove() {
         cancel = true
+        if (homing) { homing = false; link.goHome(false, null) }
     }
 
     override fun doMove(forward: Double, right: Double, down: Double, yawRad: Double, waitS: Double) {
