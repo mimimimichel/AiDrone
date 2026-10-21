@@ -1251,7 +1251,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (u > 0 && d.altitude() >= top - 0.1) u = 0.0
         if (u < 0 && d.altitude() <= limits.minAltitudeM) u = 0.0
         if (f != 0.0 || r != 0.0) {
-            val bearing = d.lookHeading() + Math.toDegrees(kotlin.math.atan2(r, f))
+            val bearing = (d.travelHeading() ?: d.lookHeading()) + Math.toDegrees(kotlin.math.atan2(r, f))
             val p = d.positionNE()
             val dist = kotlin.math.hypot(p.first, p.second)
             if (dist > limits.maxDistanceM - 1) {

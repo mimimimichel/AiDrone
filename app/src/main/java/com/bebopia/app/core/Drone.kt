@@ -114,6 +114,7 @@ abstract class DroneBase(val limits: Limits) {
             "homeBearing" to toHome,
             "homeSource" to "estimation",
             "gimbal" to cameraTilt.toDouble(),
+            "travelHeading" to travelHeading(),
             "battery" to battery(),
             "flying" to flying,
         )
@@ -188,6 +189,9 @@ abstract class DroneBase(val limits: Limits) {
 
     /** Arrête toute vitesse continue. */
     open fun stopVelocity() {}
+
+    /** Cap de vol aux manettes quand il diffère de la caméra (le pilote tourne la tête), sinon null. */
+    open fun travelHeading(): Double? = null
 
     /** Le drone se pilote aux manettes du casque (vitesses continues). */
     open val supportsSticks: Boolean get() = supportsVelocity

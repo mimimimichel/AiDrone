@@ -735,6 +735,11 @@ function drawOSD(){
   box(cx-46,ty+28,92,36,ACC,4);tx(String(Math.round(((hd%360)+360)%360)).padStart(3,'0'),cx,ty+55,24,ICE,'center',600,3);
   if(typeof tel.homeBearing==='number'){const rel=norm(tel.homeBearing-hd);const x=cx+Math.max(-45,Math.min(45,rel))*ppx;tx('H',x,ty-48,20,ACC,'center',700,0);}
   tx('NAV',cx,ty+92,16,'rgba(189,244,255,.6)','center',600,4);
+  // Cap de vol aux manettes, quand tu regardes ailleurs : repère sur le cap, ou flèche sur le côté
+  if(typeof tel.travelHeading==='number'){const rel=norm(tel.travelHeading-hd);
+    if(Math.abs(rel)>4){if(Math.abs(rel)<=45){const x=cx+rel*ppx;o.fillStyle=MOVE;o.beginPath();o.moveTo(x,ty+4);o.lineTo(x-8,ty+18);o.lineTo(x+8,ty+18);o.closePath();o.fill();tx('VOL',x,ty+36,14,MOVE,'center',700,2);}
+      else tx(rel<0?'◀ CAP DE VOL '+Math.round(-rel)+'°':'CAP DE VOL '+Math.round(rel)+'° ▶',rel<0?cx-tw/2-16:cx+tw/2+16,ty+6,16,MOVE,rel<0?'right':'left',700,2);}
+    if(Math.abs(rel)>35&&(s.sticks||pad.active)&&num(tel.hSpeed,0)>0.2)tx('⚠ TU NE REGARDES PAS OÙ TU VAS · DÉTECTEUR AVEUGLE',cx,ty+124,16,AMB,'center',700,2);}
   // Haut gauche : appareil, IA ; haut droite : heure, mode
   tx(({BEBOP:'BEBOP 2',MAVIC:'MAVIC MINI',SIM:'SIMULATION'}[s.mode]||'—')+(s.indoor?'  ·  INTÉRIEUR':''),110,118,22,ICE,'left',600,4);
   const ia=s.manual?['MANUEL',ACC]:s.paused?['IA · PAUSE',AMB]:[(s.confirm===false?'IA · AUTONOME':'IA · VALIDATION'),ACC];

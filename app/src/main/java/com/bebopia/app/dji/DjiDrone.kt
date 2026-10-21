@@ -222,16 +222,29 @@ class DjiDrone(
 
     @Volatile private var stickFollow = false
 
-    /** Manettes : la rotation au manche tourne le « devant » ; la tête garde son effet (le drone suit toujours la tête). */
+    /**
+     * Manettes avec le casque : le manche gauche tourne le cap de vol ; la tête regarde librement autour.
+     * Avant / côtés sont par rapport au cap de vol, pas à la tête : on peut avancer tout droit en regardant à droite.
+     */
     override fun sticks(forward: Double, right: Double, up: Double, yawRate: Double) {
         var yr = yawRate
+        var f = forward
+        var r = right
         if (following()) {
             if (abs(yawRate) > 1) droneYawCenter = com.bebopia.app.core.norm180(droneYawCenter!! + yawRate * 0.05)
-            yr = followRate(droneYawCenter!!)
+            val c = droneYawCenter!!
+            yr = followRate(c)
             stickFollow = true
+            // Le drone regarde ailleurs (tête tournée) : on tourne le vecteur vitesse du cap de vol vers son repère actuel.
+            val d = Math.toRadians(angleDiff(c - link.heading()))
+            f = forward * kotlin.math.cos(d) - right * kotlin.math.sin(d)
+            r = forward * kotlin.math.sin(d) + right * kotlin.math.cos(d)
         }
-        velocity(forward, right, up, yr, holdMs = 300)
+        velocity(f, r, up, yr, holdMs = 300)
     }
+
+    /** Cap de vol aux manettes (différent de la caméra quand le pilote tourne la tête), null hors casque. */
+    override fun travelHeading(): Double? = if (following()) droneYawCenter else null
 
     override fun stopVelocity() {
         if (velUntil != 0L) velUntil = 1L
