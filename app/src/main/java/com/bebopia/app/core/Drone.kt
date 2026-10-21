@@ -205,6 +205,20 @@ abstract class DroneBase(val limits: Limits) {
      */
     @Volatile var verticalAssist: Double? = null
 
+    /** Maintien optique : correction de dérive (avant, droite en m/s) envoyée quand le drone est immobile. */
+    @Volatile var holdAssist: DoubleArray? = null
+        private set
+    @Volatile var holdAssistAt = 0L
+        private set
+    fun setHold(forward: Double, right: Double) { holdAssist = doubleArrayOf(forward, right); holdAssistAt = System.currentTimeMillis() }
+    fun clearHold() { holdAssist = null }
+
+    /** Le drone ne sait pas tenir sa position seul (ni GPS ni capteurs du dessous) : il dérive. */
+    open fun positionHoldWeak(): Boolean = false
+
+    /** En vol, immobile, sans ordre en cours ni pilote aux commandes : le maintien optique peut agir. */
+    open val idleForHold: Boolean get() = false
+
     /** Hauteur au-dessus de ce qu'il y a sous le drone, mesurée par un capteur (près du sol seulement), null sinon. */
     open fun heightAboveGround(): Double? = null
 

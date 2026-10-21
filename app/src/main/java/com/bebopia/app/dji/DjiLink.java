@@ -153,6 +153,9 @@ public class DjiLink {
     /** Cap du drone (boussole), en degrés de -180 à 180. */
     public double heading() { return heading; }
 
+    /** Le drone tient sa position avec la caméra du dessous. */
+    public boolean vpsUsed() { return vps; }
+
     /** Hauteur mesurée par le capteur du dessous (m), -1 si non utilisée. */
     public double tofHeight() { return tofUsed && !tofError ? tofHeight : -1; }
 
@@ -374,7 +377,13 @@ public class DjiLink {
                 mm.refreshFileListOfStorageLocation(SettingsDefinitions.StorageLocation.SDCARD, new CommonCallbacks.CompletionCallback() {
                     @Override
                     public void onResult(DJIError e1) {
-                        if (e1 != null) { back(cam); cb.done(0, "liste des fichiers impossible : " + e1.getDescription()); return; }
+                        if (e1 != null) {
+                            back(cam);
+                            String m = e1.getDescription() == null ? "" : e1.getDescription();
+                            if (m.toLowerCase(java.util.Locale.ROOT).contains("sd card")) cb.done(0, "pas de carte microSD dans le drone : rien à copier. Mets-en une pour les photos, les vidéos et les MasterShots (en attendant, les photos de l'appli viennent de la vidéo en direct)");
+                            else cb.done(0, "liste des fichiers impossible : " + m);
+                            return;
+                        }
                         java.util.List<dji.sdk.media.MediaFile> all = mm.getSDCardFileListSnapshot();
                         final java.util.ArrayList<dji.sdk.media.MediaFile> todo = new java.util.ArrayList<>();
                         if (all != null) for (dji.sdk.media.MediaFile m : all) {

@@ -710,6 +710,7 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
                 SettingSwitch("🎮 Manettes du casque : « avant » suit mon regard (sinon : regard libre, cap de vol fixé au manche)", s.sticksFollowLook) { vm.changeSticksMode(it) }
                 SettingSwitch("🤚 Gestes devant la caméra (paume = stop, V = photo, pouce = oui/non, bras croisés = atterris)", s.gesturesOn) { vm.changeGestures(it) }
                 SettingSwitch("📥 Après l'atterrissage, copier aussi les vidéos (sinon seulement les photos)", s.mediaVideos) { vm.changeMediaVideos(it) }
+                SettingSwitch("🧲 Maintien optique : sans GPS ni capteurs du dessous, corriger la dérive du Mavic avec la vidéo", s.opticalHoldOn) { vm.changeOpticalHold(it) }
                 SettingSwitch("⛰ Suivi du relief (dehors) : garder la même hauteur au-dessus du sol" + (s.terrainAgl?.let { " — %.0f m".format(it) } ?: ""), s.terrainOn) { vm.changeTerrainFollow(it) }
                 SettingSwitch("Le drone parle à voix haute", speak) { speak = it }
                 SettingSwitch("Voix de robot", robotVoice) { robotVoice = it }

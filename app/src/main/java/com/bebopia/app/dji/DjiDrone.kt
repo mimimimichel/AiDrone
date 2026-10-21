@@ -104,16 +104,21 @@ class DjiDrone(
         var sending = false
         while (true) {
             Thread.sleep(50)
-            val active = headFollow && !manual && System.currentTimeMillis() - headSeenAt < 1000 && !moving && link.flying()
+            val idle = !manual && !moving && link.flying() && !homing
+            val active = headFollow && idle && System.currentTimeMillis() - headSeenAt < 1000
             val center = droneYawCenter
-            if (!active || center == null) {
+            val yaw = if (active && center != null) followRate(center) else null
+            // Immobile : maintien optique (dérive) et suivi du relief passent aussi par ici
+            val h = holdAssist?.takeIf { idle && System.currentTimeMillis() - holdAssistAt < 400 }
+            val va = verticalAssist?.takeIf { idle }
+            if (yaw == null && h == null && va == null) {
                 if (sending) {
                     link.sendSticks(0f, 0f, 0f, 0f)
                     sending = false
                 }
                 continue
             }
-            link.sendSticks(0f, 0f, followRate(center).toFloat(), 0f)
+            link.sendSticks((h?.get(1) ?: 0.0).toFloat(), (h?.get(0) ?: 0.0).toFloat(), (yaw ?: 0.0).toFloat(), (va ?: 0.0).toFloat())
             sending = true
         }
     }
@@ -199,6 +204,8 @@ class DjiDrone(
 
     override fun signalQuality(): Int? = link.signalQuality().takeIf { it >= 0 }
     override fun heightAboveGround(): Double? = link.tofHeight().takeIf { it > 0 }
+    override fun positionHoldWeak(): Boolean = link.flying() && !hasGps && !link.vpsUsed()
+    override val idleForHold: Boolean get() = !manual && !moving && link.flying() && !homing
 
     @Volatile private var homing = false
 

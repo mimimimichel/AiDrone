@@ -114,6 +114,8 @@ data class UiState(
     val gesturesOn: Boolean = true,
     val mediaVideos: Boolean = false,
     val terrainOn: Boolean = false,
+    val opticalHoldOn: Boolean = true,
+    val holdActive: Boolean = false,
     val terrainAgl: Double? = null,
     /** Geste reconnu (ou en cours), pour l'affichage. */
     val gesture: String? = null,
@@ -342,6 +344,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             gesturesOn = gesturesOn,
             mediaVideos = mediaVideos,
             terrainOn = terrainTarget != null,
+            opticalHoldOn = opticalHoldOn,
+            holdActive = holdActive,
             terrainAgl = terrainAgl,
             gesture = gestureLabel(),
         )
@@ -629,6 +633,50 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
+    // ---- maintien optique (Mavic sans GPS ni capteurs du dessous) --------------------------------------
+    var opticalHoldOn: Boolean
+        get() = prefs.getBoolean("optical_hold", true)
+        private set(v) = prefs.edit().putBoolean("optical_hold", v).apply()
+    fun changeOpticalHold(on: Boolean) { opticalHoldOn = on; refresh() }
+    @Volatile private var holdJob: kotlinx.coroutines.Job? = null
+    @Volatile var holdActive = false
+        private set
+
+    /** 7 fois par seconde : si le drone dérive faute de repères, on corrige avec la vidéo. */
+    private fun startOpticalHold(d: DroneBase, frames: GrayFrames) {
+        holdJob?.cancel()
+        holdJob = viewModelScope.launch(Dispatchers.Default) {
+            val hold = com.bebopia.app.core.vision.OpticalHold(72.0)
+            var idleSince = 0L
+            var announced = false
+            while (isActive && drone === d) {
+                delay(140)
+                val now = System.currentTimeMillis()
+                val want = opticalHoldOn && d.positionHoldWeak() && d.idleForHold
+                if (!want) {
+                    if (holdActive || d.holdAssist != null) { d.clearHold(); hold.reset(); holdActive = false }
+                    idleSince = 0L
+                    continue
+                }
+                if (idleSince == 0L) { idleSince = now; hold.reset(); continue }
+                if (now - idleSince < 700) continue // laisser le drone finir de freiner
+                val g = frames.grab()
+                if (g == null) { d.clearHold(); continue }
+                val c = runCatching { hold.update(g, d.compass(), d.gimbalPitch(), now) }.getOrNull()
+                if (c == null) { d.clearHold(); continue }
+                d.setHold(c.forward, c.right)
+                holdActive = true
+                if (!announced) {
+                    announced = true
+                    sysMessage("🧲 Maintien optique : le drone n'a ni GPS ni capteurs du dessous, il dérive. Je corrige avec la vidéo " +
+                        "(il faut du décor bien visible devant lui ; allume la lumière, un sol texturé aide aussi ses capteurs).")
+                }
+            }
+            d.clearHold()
+            holdActive = false
+        }
+    }
+
     private fun startGuard(d: DroneBase, a: Agent, frames: GrayFrames) {
         guard?.stop()
         guard = ObstacleGuard(d, frames, enabled = { guardOn }, onObstacle = { ttc, moving ->
@@ -696,6 +744,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val eyes = TextureEyes({ textureView }, { dji.hasRecentFrame() })
                 val a = makeAgent(d, eyes)
                 startGuard(d, a, TextureGray({ textureView }, { dji.hasRecentFrame() }))
+                startOpticalHold(d, TextureGray({ textureView }, { dji.hasRecentFrame() }))
                 attachFinder(d, a, eyes, simulation = false, hfov = 72.0, track = TextureGray({ textureView }, { dji.hasRecentFrame() }, 320))
                 drone = d
                 agent = a
@@ -1243,6 +1292,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .put("sticks", questActive)
             .put("headPaused", d?.headPaused == true)
             .put("preflight", clean(s.preflightVerdict))
+            .put("hold", s.holdActive)
             .put("terrain", if (s.terrainOn) (s.terrainAgl ?: -1.0) else null)
             .put("gesture", clean(s.gesture))
             .put("sticksMode", if (sticksFollowLook) "regard" else "libre")

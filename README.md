@@ -137,6 +137,13 @@ Par défaut (✋ **mode prudent**), l'IA te demande ton accord avant chaque dép
 - **Photos et vidéos récupérées** : après l'atterrissage, les photos du vol sont copiées sur le téléphone, dans le journal (les vidéos aussi si tu l'actives dans ⚙, ou « récupère les vidéos »). Mavic : depuis sa carte SD ; Bebop : par son serveur FTP. Dans le journal, ▶ ouvre une vidéo.
 - **Gestes devant la caméra** (sans Internet) : ✋ paume ou un bras levé = stop ; ✌️ V ou deux bras levés = photo (compte à rebours de 3 s) ; 👍 / 👎 = oui / non à la proposition de l'IA ; bras croisés en X = atterris. Un geste doit être tenu environ une seconde, puis 4 s de pause avant le suivant. Désactivables dans ⚙.
 
+## Maintien optique (Mavic sans GPS ni capteurs du dessous)
+
+En intérieur sombre ou au-dessus d'un sol uni, le Mavic ne voit plus le sol : il passe en « mode ATTI » et dérive.
+L'appli suit alors le décor dans la vidéo (il glisse sur le côté = dérive latérale, il grossit = le drone avance) et renvoie
+de petites corrections tant que le drone est immobile. « MAINTIEN OPTIQUE » s'affiche dans le casque. Réglable dans ⚙.
+Ça ne remplace pas ses capteurs : allume la lumière, un tapis ou un sol texturé les aide beaucoup.
+
 ## Plans pro : Spotlight, MasterShots, Hyperlapse, suivi du relief
 
 - **Spotlight** (« spotlight sur moi ») : tu pilotes aux manettes du casque, le drone garde la caméra et le cap verrouillés sur la cible.
