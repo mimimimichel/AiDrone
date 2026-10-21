@@ -24,8 +24,8 @@ android {
         applicationId = "com.bebopia.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 44
-        versionName = "3.4.4"
+        versionCode = 45
+        versionName = "3.5"
         manifestPlaceholders["DJI_API_KEY"] = djiApiKey
         buildConfigField("String", "GEMINI_KEY", "\"" + geminiKey + "\"")
         // Le kit DJI n'existe que pour les processeurs ARM (tous les téléphones récents).
@@ -91,6 +91,8 @@ android {
 dependencies {
     // Détecteur d'objets sur le téléphone (sans Internet)
     implementation("com.google.mediapipe:tasks-vision:0.10.20")
+    // Carte USB-série (FTDI, CH340, CP2102) pour piloter un Roomba
+    implementation("com.github.mik3y:usb-serial-for-android:3.8.1")
     // Montage vidéo sur le téléphone (MasterShots)
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.14.1")

@@ -815,7 +815,7 @@ class Agent(
             when (action["type"] as? String) {
                 "takeoff" -> takeoffChecked()
                 "hand_launch" -> drone.handLaunch()
-                "land" -> if (drone.indoor && lander != null && drone.flying) lander!!.land() else drone.land()
+                "land" -> if (drone.indoor && !drone.groundRobot && lander != null && drone.flying) lander!!.land() else drone.land()
                 "move" -> try {
                     drone.moveRef = action["_vue"] as? Double
                     val f0 = num(action, "forward")
@@ -875,7 +875,7 @@ class Agent(
                 "tilt_camera" -> drone.tiltCamera(num(action, "degrees"))
                 "hover" -> drone.hover(num(action, "seconds", 1.0))
                 // Dehors avec GPS : le drone rentre seul (même si la liaison coupe) ; sinon retour estimé par l'application
-                "return_home" -> (if (!drone.indoor) drone.nativeReturnHome() else null) ?: drone.returnHome()
+                "return_home" -> (if (!drone.indoor || drone.groundRobot) drone.nativeReturnHome() else null) ?: drone.returnHome()
                 "search_area" -> areaSearch?.run(
                     action["target"]?.toString() ?: "",
                     num(action, "radius_m").takeIf { it > 0 },

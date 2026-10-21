@@ -137,6 +137,17 @@ Par défaut (✋ **mode prudent**), l'IA te demande ton accord avant chaque dép
 - **Photos et vidéos récupérées** : après l'atterrissage, les photos du vol sont copiées sur le téléphone, dans le journal (les vidéos aussi si tu l'actives dans ⚙, ou « récupère les vidéos »). Mavic : depuis sa carte SD ; Bebop : par son serveur FTP. Dans le journal, ▶ ouvre une vidéo.
 - **Gestes devant la caméra** (sans Internet) : ✋ paume ou un bras levé = stop ; ✌️ V ou deux bras levés = photo (compte à rebours de 3 s) ; 👍 / 👎 = oui / non à la proposition de l'IA ; bras croisés en X = atterris. Un geste doit être tenu environ une seconde, puis 4 s de pause avant le suivant. Désactivables dans ⚙.
 
+## Robot roulant : Roomba série 600 (🤖)
+
+Un vieux téléphone posé sur un Roomba (série 600, ex. 616) devient un robot avec caméra, voix et IA.
+- Matériel : une carte USB-série FT232 (interrupteur sur **5V**), des fils Dupont mâle-femelle, un câble USB-C <-> USB-C qui transmet les données.
+- Câblage dans la prise ronde du Roomba (sous le capot) : TX -> trou 3, RX -> trou 4, RTS ou DTR -> trou 5 (réveil), GND -> trou 6.
+  **Jamais rien sur les trous 1 et 2** (batterie, ~14-21 V). Vérifier le brochage dans la doc « Create 2 Open Interface ».
+- Dans l'app : « 🤖 Roomba (carte USB) ». À la connexion il joue une petite mélodie : toute la chaîne marche.
+  « Démarrer » le met en mode sécurité (il s'arrête seul au bord d'une marche ou s'il est soulevé), « ARRÊTER » le rend à ses boutons.
+- Il tourne puis avance (pas de pas de côté), ses pare-chocs l'arrêtent, « rentre à ta base » le renvoie se recharger.
+- Support imprimable en 3D pour le téléphone et la carte : `hardware/roomba-mount/`.
+
 ## Maintien optique (Mavic sans GPS ni capteurs du dessous)
 
 En intérieur sombre ou au-dessus d'un sol uni, le Mavic ne voit plus le sol : il passe en « mode ATTI » et dérive.

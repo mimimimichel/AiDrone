@@ -58,7 +58,7 @@ import kotlinx.coroutines.launch
 import kotlin.concurrent.thread
 import kotlin.math.abs
 
-enum class Mode { NONE, CONNECTING, BEBOP, MAVIC, SIM }
+enum class Mode { NONE, CONNECTING, BEBOP, MAVIC, SIM, ROOMBA }
 
 data class UiState(
     val mode: Mode = Mode.NONE,
@@ -307,7 +307,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             flying = d?.flying ?: false,
             droneState = bebop?.flyingStateLabel ?: if (d != null) (if (d.flying) "en vol" else "au sol") else "",
             linkUp = bebop?.linkUp ?: if (mode == Mode.MAVIC) djiOrNull?.isConnected() ?: false else true,
-            hasVideo = video?.hasRecentFrame ?: if (mode == Mode.MAVIC) djiOrNull?.hasRecentFrame() ?: false else (mode == Mode.SIM),
+            hasVideo = video?.hasRecentFrame ?: if (mode == Mode.MAVIC) djiOrNull?.hasRecentFrame() ?: false else (mode == Mode.SIM || mode == Mode.ROOMBA),
             listening = listening,
             voice = voiceLabel,
             network = if (mode == Mode.MAVIC) djiOrNull?.videoStats() ?: router.describe else router.describe,
@@ -354,7 +354,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val vision = GeminiVision({ geminiKey }, router::openApi)
 
     /** [hfov] : champ de vision horizontal de la caméra (Bebop 75°, Mavic Mini 72°, téléphone 65°). */
-    private fun attachFinder(d: DroneBase, a: Agent, eyes: Eyes, simulation: Boolean, hfov: Double = if (simulation) 65.0 else 75.0, track: GrayFrames? = null) {
+    private fun attachFinder(d: DroneBase, a: Agent, eyes: Eyes, simulation: Boolean, hfov: Double = if (simulation) 65.0 else 75.0, track: GrayFrames? = null, phoneCamera: Boolean = simulation) {
         // Avant chaque avancée commandée par l'IA : obstacle dans l'axe ? (modèle de vision)
         a.pathChecker = com.bebopia.app.core.ai.PathChecker { jpeg, fwd -> vision.checkPath(jpeg, fwd) }
         a.finder = ObjectFinder(
@@ -375,7 +375,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // Détecteur d'objets du téléphone (sans Internet) : recherche et suivi plus rapides
         localDetector?.close()
         val ld = com.bebopia.app.android.LocalDetector(getApplication(), frame = {
-            if (simulation) previewView?.bitmap?.let { b ->
+            if (phoneCamera) previewView?.bitmap?.let { b ->
                 val w = 640
                 val h = (w.toFloat() * b.height / b.width).toInt().coerceAtLeast(1)
                 android.graphics.Bitmap.createScaledBitmap(b, w, h, true).also { if (it !== b) b.recycle() }
@@ -408,7 +408,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val sc = com.bebopia.app.core.ai.SceneMemory { d.indoor }
         d.space = sc
         d.sticksFollowLook = sticksFollowLook
-        val rg = track?.takeIf { !simulation }?.let { com.bebopia.app.core.ai.Ranger(d, it, hfov, report = { m -> a.addChat(Role.SYSTEM, m) }) }
+        val rg = track?.takeIf { !simulation && !d.groundRobot }?.let { com.bebopia.app.core.ai.Ranger(d, it, hfov, report = { m -> a.addChat(Role.SYSTEM, m) }) }
         a.ranger = rg
         a.lander = com.bebopia.app.core.ai.Lander(d, eyes, track,
             com.bebopia.app.core.ai.LandingAnalyzer { j, alt, down -> vision.landing(j, alt, down) }, hfov, simulation,
@@ -462,7 +462,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
                 // Dehors : vérification de la zone et de la météo, une fois par connexion
-                if (!d.indoor && !preflightTried && mode != Mode.SIM) {
+                if (!d.indoor && !preflightTried && mode != Mode.SIM && mode != Mode.ROOMBA) {
                     preflightTried = true
                     thread(isDaemon = true) { runCatching { runPreflight() } }
                 }
@@ -879,6 +879,42 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ---- Roomba : robot roulant piloté par une carte USB-série, caméra du téléphone ----------------------------
+    fun connectRoomba() {
+        if (mode != Mode.NONE) return
+        mode = Mode.CONNECTING
+        sysMessage("🤖 Connexion au Roomba : carte USB-série branchée au téléphone, fils dans la prise du Roomba…")
+        refresh()
+        viewModelScope.launch(Dispatchers.IO) {
+            var link: com.bebopia.app.android.UsbSerial? = null
+            try {
+                link = com.bebopia.app.android.UsbSerial.open(getApplication())
+                sysMessage("🔌 Carte USB-série ouverte. J'appelle le Roomba…")
+                val d = com.bebopia.app.core.roomba.RoombaDrone(limits, link, ::log)
+                d.connect()
+                d.indoor = true
+                val eyes = PreviewEyes { previewView }
+                val a = makeAgent(d, eyes)
+                startGuard(d, a, PreviewGray({ previewView }))
+                attachFinder(d, a, eyes, simulation = false, hfov = 65.0, track = PreviewGray({ previewView }, 320), phoneCamera = true)
+                drone = d
+                agent = a
+                mode = Mode.ROOMBA
+                a.start()
+                val s = d.sensors
+                a.addChat(Role.SYSTEM, "🤖 Roomba connecté (${d.baud} bauds) : il a dû jouer une petite mélodie. Batterie ${s?.batteryPct ?: "?"} %" +
+                    (if (s?.onHomeBase == true) ", sur sa base" else "") + ". « Décoller » le démarre, « Atterrir » l'arrête. " +
+                    "Laisse l'écran allumé et désactive l'optimisation de batterie pour Bebop IA si le téléphone reste sur le robot.")
+            } catch (e: Throwable) {
+                Log.e("BebopIA", "roomba", e)
+                link?.close()
+                mode = Mode.NONE
+                sysMessage("🤖 Roomba : ${e.message ?: e.javaClass.simpleName}")
+            }
+            refresh()
+        }
+    }
+
     fun startSimulation() {
         if (mode != Mode.NONE) return
         CrashReport.mark("simulation : début")
@@ -1140,7 +1176,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             live = null
             return
         }
-        val where = if (mode == Mode.SIM) "Simulation : tu vois par la caméra du téléphone, rien ne vole." else "Tu es connecté au vrai drone (${drone?.name ?: "drone"})."
+        val where = if (mode == Mode.SIM) "Simulation : tu vois par la caméra du téléphone, rien ne vole."
+            else if (mode == Mode.ROOMBA) "Tu es un ROBOT QUI ROULE (un Roomba), avec la caméra du téléphone posé dessus. Tu ne voles pas : " +
+                "« décoller » = démarrer, « atterrir » = t'arrêter. Tu ne montes pas, tu ne descends pas et tu ne vas pas de côté " +
+                "(pour aller à droite tu tournes puis tu avances). Tu vois à hauteur du sol. Tes pare-chocs t'arrêtent si tu touches " +
+                "quelque chose, et tu t'arrêtes tout seul au bord d'une marche. Pour rentrer te recharger : return_home (tu cherches ta base tout seul)."
+            else "Tu es connecté au vrai drone (${drone?.name ?: "drone"})."
         val how = if (a.paused) "Tu es en pause : tu peux parler mais pas bouger." else "Tu peux piloter."
         val check = (if (a.confirm) " Chaque déplacement doit être validé par le pilote." else "") +
             " Distance max par action : %.1f m.".format(limits.maxStepM)
@@ -1273,7 +1314,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Image pour le casque (appelée sur le thread de l'interface). */
     private fun grabForHeadset(): android.graphics.Bitmap? = when (mode) {
         Mode.BEBOP, Mode.MAVIC -> textureView?.takeIf { it.isAvailable }?.getBitmap(960, 540)
-        Mode.SIM -> previewView?.bitmap?.let { b ->
+        Mode.SIM, Mode.ROOMBA -> previewView?.bitmap?.let { b ->
             val w = 960
             val h = (w.toFloat() * b.height / b.width).toInt().coerceAtLeast(1)
             android.graphics.Bitmap.createScaledBitmap(b, w, h, true).also { if (it !== b) b.recycle() }
@@ -1485,7 +1526,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Avant chaque décollage dehors : refus si zone interdite ou météo dangereuse (« décolle quand même » pour passer outre). */
     private fun takeoffGate(d: DroneBase): String? {
-        if (d.indoor || System.currentTimeMillis() < forceTakeoffUntil) return null
+        if (d.groundRobot || d.indoor || System.currentTimeMillis() < forceTakeoffUntil) return null
         val r = if (preflightFresh()) lastPreflight!! else runPreflight()
         return if (r.verdict == "non") "refusé : ${r.text} Dis « décolle quand même » pour passer outre." else null
     }
@@ -1521,10 +1562,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             while (isActive) {
                 delay(250)
                 val d = drone ?: continue
-                if (!gesturesOn || !(d.flying || mode == Mode.SIM) || agent == null) continue
+                if (!gesturesOn || !(d.flying || mode == Mode.SIM || mode == Mode.ROOMBA) || agent == null) continue
                 val bmp = kotlinx.coroutines.withContext(Dispatchers.Main) {
                     runCatching {
-                        if (mode == Mode.SIM) previewView?.bitmap?.let { android.graphics.Bitmap.createScaledBitmap(it, 640, 640 * it.height / it.width, true) }
+                        if (mode == Mode.SIM || mode == Mode.ROOMBA) previewView?.bitmap?.let { android.graphics.Bitmap.createScaledBitmap(it, 640, 640 * it.height / it.width, true) }
                         else textureView?.takeIf { it.isAvailable }?.getBitmap(640, 360)
                     }.getOrNull()
                 } ?: continue

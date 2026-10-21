@@ -50,6 +50,9 @@ abstract class DroneBase(val limits: Limits) {
 
     open var flying: Boolean = false
 
+    /** Robot roulant (Roomba) : ne vole pas, ne monte pas, ne se déplace pas sur le côté (il tourne puis avance). */
+    open val groundRobot: Boolean get() = false
+
     /** En intérieur : pas courts, lents, jamais plus haut que le plafond estimé (réglé par l'application). */
     @Volatile var indoor = false
 
@@ -357,10 +360,12 @@ abstract class DroneBase(val limits: Limits) {
         syncHeading()
         val l = limits
         // En intérieur : pas courts (les manœuvres guidées ont droit à un peu plus)
-        val step = if (indoor) minOf(maxStep, if (maxStep <= l.maxStepM) INDOOR_STEP else INDOOR_LONG_STEP) else maxStep
+        val step = if (indoor && !groundRobot) minOf(maxStep, if (maxStep <= l.maxStepM) INDOOR_STEP else INDOOR_LONG_STEP) else maxStep
+        if (groundRobot && abs(up) > 0.05 && abs(forward) < 0.05 && abs(right) < 0.05 && abs(yaw) < 1)
+            return "refusé : je suis un robot qui roule, je ne peux ni monter ni descendre"
         var f = forward.coerceIn(-step, step)
         var r = right.coerceIn(-step, step)
-        var u = up.coerceIn(-step, step)
+        var u = if (groundRobot) 0.0 else up.coerceIn(-step, step)
         val yw = yaw.coerceIn(-l.maxYawDeg, l.maxYawDeg)
         var note = ""
         // Place libre d'après le repérage : on ne va pas dans un mur

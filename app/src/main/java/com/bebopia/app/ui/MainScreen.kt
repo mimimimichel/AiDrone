@@ -113,6 +113,9 @@ fun MainScreen(vm: MainViewModel) {
     val locPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { _ ->
         vm.connectMavic()
     }
+    val roombaCamPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        if (ok) vm.connectRoomba() else vm.sysMessage("Autorise la caméra : c'est l'œil du Roomba.")
+    }
     val camPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         if (ok) vm.startSimulation() else vm.sysMessage("Autorise la caméra pour la simulation.")
     }
@@ -144,12 +147,13 @@ fun MainScreen(vm: MainViewModel) {
                 Mode.BEBOP -> (if (s.linkUp) "Bebop connecté" else "Liaison perdue") to (if (s.linkUp) Ok else Danger)
                 Mode.MAVIC -> (if (s.linkUp) "Mavic connecté" else "Liaison perdue") to (if (s.linkUp) Ok else Danger)
                 Mode.SIM -> "Simulation" to Accent
+                Mode.ROOMBA -> "Roomba connecté" to Ok
                 Mode.CONNECTING -> "Connexion…" to Muted
                 Mode.NONE -> "Déconnecté" to Muted
             }
             Text(label, color = color, fontSize = 13.sp)
             Spacer(Modifier.weight(1f))
-            if (s.mode == Mode.BEBOP || s.mode == Mode.MAVIC || s.mode == Mode.SIM) {
+            if (s.mode == Mode.BEBOP || s.mode == Mode.MAVIC || s.mode == Mode.SIM || s.mode == Mode.ROOMBA) {
                 TextButton(onClick = { vm.disconnect() }) { Text("Déconnecter", fontSize = 13.sp) }
             }
             // Mode confiance (🤝) ou prudent (✋) : un appui pour changer
@@ -173,7 +177,7 @@ fun MainScreen(vm: MainViewModel) {
         ) {
             when (s.mode) {
                 Mode.BEBOP, Mode.MAVIC -> BebopVideoView(vm)
-                Mode.SIM -> CameraPreview(vm)
+                Mode.SIM, Mode.ROOMBA -> CameraPreview(vm)
                 else -> ConnectPanel(
                     connecting = s.mode == Mode.CONNECTING,
                     onConnect = { vm.connectBebop() },
@@ -186,9 +190,13 @@ fun MainScreen(vm: MainViewModel) {
                         if (granted(Manifest.permission.CAMERA)) vm.startSimulation()
                         else camPermission.launch(Manifest.permission.CAMERA)
                     },
+                    onRoomba = {
+                        if (granted(Manifest.permission.CAMERA)) vm.connectRoomba()
+                        else roombaCamPermission.launch(Manifest.permission.CAMERA)
+                    },
                 )
             }
-            if (s.mode == Mode.BEBOP || s.mode == Mode.MAVIC || s.mode == Mode.SIM) {
+            if (s.mode == Mode.BEBOP || s.mode == Mode.MAVIC || s.mode == Mode.SIM || s.mode == Mode.ROOMBA) {
                 MarksOverlay(s.marks)
                 Text(
                     statusLabel(s),
@@ -316,13 +324,13 @@ fun MainScreen(vm: MainViewModel) {
                 Text(if (s.paused) "▶ IA" else "⏸ Pause IA", fontWeight = FontWeight.Bold)
             }
             OutlinedButton(onClick = { vm.takeoff() }, modifier = Modifier.weight(1f).height(52.dp)) {
-                Text("Décoller")
+                Text(if (s.mode == Mode.ROOMBA) "Démarrer" else "Décoller")
             }
             Button(
                 onClick = { vm.land() },
                 colors = ButtonDefaults.buttonColors(containerColor = Danger),
                 modifier = Modifier.weight(1.3f).height(52.dp),
-            ) { Text("ATTERRIR", fontWeight = FontWeight.Bold) }
+            ) { Text(if (s.mode == Mode.ROOMBA) "ARRÊTER" else "ATTERRIR", fontWeight = FontWeight.Bold) }
         }
         Box(
             Modifier
@@ -360,7 +368,7 @@ private fun statusLabel(s: UiState): String {
 }
 
 private fun telemetry(s: UiState): String {
-    if (s.mode != Mode.BEBOP && s.mode != Mode.MAVIC && s.mode != Mode.SIM) return "Réseau : ${s.network}"
+    if (s.mode != Mode.BEBOP && s.mode != Mode.MAVIC && s.mode != Mode.SIM && s.mode != Mode.ROOMBA) return "Réseau : ${s.network}"
     // La batterie est passée en paramètre, jamais collée dans le modèle : son « % » ferait planter format().
     val bat = s.battery?.let { "$it %" } ?: "?"
     val casque = if (s.headsetViewers > 0) "   • 🥽 casque" else ""
@@ -453,7 +461,7 @@ private fun ChatBubble(line: ChatLine) {
 }
 
 @Composable
-private fun ConnectPanel(connecting: Boolean, onConnect: () -> Unit, onMavic: () -> Unit, onSimulate: () -> Unit) {
+private fun ConnectPanel(connecting: Boolean, onConnect: () -> Unit, onMavic: () -> Unit, onSimulate: () -> Unit, onRoomba: () -> Unit) {
     Column(
         Modifier.fillMaxSize().padding(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -478,6 +486,8 @@ private fun ConnectPanel(connecting: Boolean, onConnect: () -> Unit, onMavic: ()
                 Button(onClick = onMavic) { Text("Mavic Mini") }
                 OutlinedButton(onClick = onSimulate) { Text("Simulation") }
             }
+            Spacer(Modifier.height(6.dp))
+            OutlinedButton(onClick = onRoomba) { Text("🤖 Roomba (carte USB)") }
         }
     }
 }
