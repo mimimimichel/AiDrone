@@ -165,6 +165,44 @@ class GeminiVision(
         throw IOException("analyse de la vue impossible (${last?.message})")
     }
 
+    private val LANDING_SCHEMA = JSONObject("""
+        {"type":"object","properties":{
+          "safe_below":{"type":"boolean","description":"true si le drone peut se poser juste en dessous (point situé au centre de l'image quand la caméra regarde vers le bas)"},
+          "spot_x":{"type":"integer","description":"meilleur endroit pour se poser : position horizontale dans l'image, de 0 à 1000 (-1 si aucun)"},
+          "spot_y":{"type":"integer","description":"position verticale dans l'image, de 0 (haut) à 1000 (bas), -1 si aucun"},
+          "spot_description":{"type":"string"},
+          "reason":{"type":"string","description":"pourquoi le point sous le drone convient ou non"}
+        },"required":["safe_below","spot_x","spot_y","spot_description","reason"]}
+        """.trimIndent())
+
+    /** Où se poser : un endroit plat, dégagé, sans danger, le plus proche possible. */
+    fun landing(jpegBase64: String, altitudeM: Double, downward: Boolean): com.bebopia.app.core.ai.LandingView {
+        val key = apiKey()
+        if (key.isBlank()) throw IllegalStateException("clé Gemini manquante")
+        val prompt = "Image de la caméra d'un drone de 30 cm de large (avec sa cage), à environ %.1f m du sol, ".format(altitudeM) +
+            (if (downward) "caméra tournée vers le bas : le point juste sous le drone est au centre de l'image. " else "caméra inclinée à 45° vers le sol devant lui. ") +
+            "Il doit se poser. Un bon endroit : surface plane et horizontale (sol, tapis ras), dégagée sur au moins 60 cm de diamètre, " +
+            "pas un bord de table ou de meuble, pas de câble, d'objet fragile, de liquide, de plante, ni de personne ou d'animal, " +
+            "pas sur un lit ou un coussin (trop mou). Dis si le point sous le drone convient, et donne le meilleur endroit visible, le plus proche possible."
+        var last: Exception? = null
+        for (attempt in MODELS.indices) {
+            val model = MODELS[(modelIndex + attempt) % MODELS.size]
+            try {
+                val j = generate(model, key, jpegBase64, prompt, LANDING_SCHEMA)
+                val x = j.optInt("spot_x", -1); val y = j.optInt("spot_y", -1)
+                return com.bebopia.app.core.ai.LandingView(
+                    j.optBoolean("safe_below"),
+                    if (x in 0..1000 && y in 0..1000) x / 1000.0 else null,
+                    if (x in 0..1000 && y in 0..1000) y / 1000.0 else null,
+                    j.optString("spot_description"), j.optString("reason"),
+                )
+            } catch (e: ModelUnavailable) {
+                last = e
+            }
+        }
+        throw IOException("analyse impossible (${last?.message})")
+    }
+
     /** Texte seul (résumé de vol). Essaie les modèles Flash l'un après l'autre. */
     fun text(prompt: String): String {
         val key = apiKey()

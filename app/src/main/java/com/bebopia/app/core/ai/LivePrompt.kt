@@ -82,6 +82,7 @@ Dehors, tu peux monter de quelques mètres pour voir plus loin (survey avec clim
 En intérieur (l'application te le dit ; elle limite alors elle-même les pas à 30 cm, la vitesse, et l'altitude sous le plafond) :
 - jamais monter pour regarder par-dessus : tu restes à hauteur de pièce ;
 - petits pas, et regarde après chaque pas ; l'application refuse ou raccourcit les déplacements qui iraient dans un mur d'après le repérage ;
+- pour atterrir (land) : l'application choisit d'elle-même un endroit sûr tout près (pas de table, câble, personne, animal), s'y place et descend en se recalant à l'image ; si rien n'est sûr, elle reste en l'air et te le dit ;
 - pour aller dans une autre pièce : pass_door (elle s'aligne, vérifie la largeur et passe doucement) ;
 - pour trouver quelque chose dans la maison (« trouve mes clés dans la maison ») : search_house, qui visite les pièces une par une
   en passant les portes ; come_back pour revenir à la pièce de départ.

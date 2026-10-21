@@ -285,7 +285,7 @@ class Agent(
         val norm = normalize(text)
         val words = norm.split(' ').filter { it.isNotBlank() }.toSet()
         if (LAND_PHRASES.any { norm.contains(it) }) {
-            humanLand()
+            humanLand(now = listOf("tout de suite", "immediatement", "maintenant", "vite", "ici").any { norm.contains(it) })
             return true
         }
         if (words.any { it in STOP_WORDS }) {
@@ -540,6 +540,7 @@ class Agent(
     }
 
     fun stopNow() {
+        lander?.abort = true
         paused = true
         pending = null
         lastText = "Stop : IA en pause"
@@ -548,14 +549,20 @@ class Agent(
         thread(isDaemon = true) { runCatching { drone.cancelMove() } }
     }
 
-    fun humanLand() {
+    /** Atterrissage soigné en intérieur (choisir l'endroit, descente recalée à l'image). */
+    var lander: Lander? = null
+
+    /** [now] : « atterris tout de suite » -> ici, sans chercher d'endroit. */
+    fun humanLand(now: Boolean = false) {
         paused = true
         pending = null
         lastText = "Atterrissage demandé"
-        speak("J'atterris.")
+        val smart = !now && drone.indoor && drone.flying && lander != null
+        speak(if (smart) "Je cherche un endroit pour me poser." else "J'atterris.")
         thread(isDaemon = true) {
-            val r = runCatching { drone.land() }.getOrElse { "échec : ${it.message}" }
+            val r = runCatching { if (smart) lander!!.land() else drone.land() }.getOrElse { "échec : ${it.message}" }
             system(r)
+            if (smart) onEvent?.invoke("Atterrissage demandé par le pilote : $r", false)
         }
     }
 
@@ -772,7 +779,7 @@ class Agent(
         val result = try {
             when (action["type"] as? String) {
                 "takeoff" -> drone.takeoff()
-                "land" -> drone.land()
+                "land" -> if (drone.indoor && lander != null && drone.flying) lander!!.land() else drone.land()
                 "move" -> try {
                     drone.moveRef = action["_vue"] as? Double
                     val f0 = num(action, "forward")

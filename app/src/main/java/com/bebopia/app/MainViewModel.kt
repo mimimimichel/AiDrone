@@ -409,6 +409,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         d.sticksFollowLook = sticksFollowLook
         val rg = track?.takeIf { !simulation }?.let { com.bebopia.app.core.ai.Ranger(d, it, hfov, report = { m -> a.addChat(Role.SYSTEM, m) }) }
         a.ranger = rg
+        a.lander = com.bebopia.app.core.ai.Lander(d, eyes, track,
+            com.bebopia.app.core.ai.LandingAnalyzer { j, alt, down -> vision.landing(j, alt, down) }, hfov, simulation,
+            report = { m -> a.addChat(Role.SYSTEM, m) })
         val sv = com.bebopia.app.core.ai.Surveyor(d, eyes,
             com.bebopia.app.core.ai.SceneAnalyzer { j, t, down, hf -> vision.analyzeView(j, t, down, hf) }, sc, hfov, simulation,
             shouldStop = { a.paused }, report = { a.addChat(Role.SYSTEM, it) },
