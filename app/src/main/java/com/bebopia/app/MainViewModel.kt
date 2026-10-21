@@ -449,6 +449,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 delay(1000)
                 val d = drone ?: continue
                 runCatching { nav?.tick() }
+                runCatching { checkDrift(d) }
                 if (questActive && System.currentTimeMillis() - questLastActive > 1000) questActive = false
                 // Nouveau vol : la mémoire de la scène repart de zéro ; fin de vol : le plan des pièces va dans la mémoire de l'IA
                 if (d.flying && !wasFlyingTick) scene?.clear()
@@ -677,10 +678,59 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Le positionnement visuel (caméra du dessous) doit être activé dans les réglages du drone : on le vérifie et on l'allume. */
+    private fun ensureVisionPositioning(a: Agent) {
+        val l = djiOrNull ?: return
+        l.getVisionPositioning { on, err ->
+            when {
+                on == false -> l.visionPositioning(true) { e ->
+                    a.addChat(Role.SYSTEM, if (e == null) "👁 Le positionnement visuel (caméra du dessous) était DÉSACTIVÉ dans les réglages du drone : je l'ai activé. " +
+                        "C'est lui qui tient le drone en place en intérieur." else "👁 Positionnement visuel désactivé, et impossible de l'activer ($e) : active-le dans DJI Fly (Sécurité).")
+                }
+                on == null -> log("réglage du positionnement visuel illisible : $err")
+            }
+        }
+    }
+
+    @Volatile private var driftWarnedFlight = false
+    @Volatile private var driftSince = 0L
+
+    /** En vol sans GPS : si la caméra du dessous ne tient pas le drone, on cherche pourquoi et on le dit (une fois par vol). */
+    private fun checkDrift(d: DroneBase) {
+        val l = djiOrNull
+        if (d !is com.bebopia.app.dji.DjiDrone || l == null) return
+        if (!d.flying) { driftWarnedFlight = false; driftSince = 0L; return }
+        val weak = d.positionHoldWeak() && d.altitude() in 0.5..9.0
+        if (!weak) { driftSince = 0L; return }
+        if (driftSince == 0L) driftSince = System.currentTimeMillis()
+        if (driftWarnedFlight || System.currentTimeMillis() - driftSince < 4000) return
+        driftWarnedFlight = true
+        val a = agent ?: return
+        l.getVisionPositioning { on, _ ->
+            if (on == false) {
+                l.visionPositioning(true, null)
+                a.addChat(Role.SYSTEM, "👁 Caméra du dessous : le positionnement visuel était désactivé dans le drone, je viens de l'activer.")
+            }
+            val g = runCatching { TextureGray({ textureView }, { true }).grab() }.getOrNull()
+            val dark = g != null && g.px.average() < 50
+            a.addChat(Role.SYSTEM, "⚠️ Le drone DÉRIVE : il vole sans GPS et sa caméra du dessous ne le tient pas (mode ${l.flightModeName()}). " +
+                "Elle a besoin : de lumière (la pièce${if (dark) " a l'air sombre" else ""} doit être bien éclairée, elle ne voit rien sous ~15 lux), " +
+                "d'un sol qui a des motifs juste SOUS le drone (un sol uni, brillant, un tapis uni ou un carrelage clair ne marchent pas ; ce qu'il y a sur les murs ne compte pas), " +
+                "d'une hauteur entre 0,5 et 10 m, et de lentilles propres sous le drone. " +
+                "En attendant : maintien optique actif, pas de manœuvre automatique. Si ça persiste avec un sol à motifs et de la lumière, " +
+                "étalonne les capteurs de vision (DJI Assistant 2 sur ordinateur).")
+            speaker.say("Attention, je dérive : ma caméra du dessous ne voit pas le sol.")
+        }
+    }
+
     private fun startGuard(d: DroneBase, a: Agent, frames: GrayFrames) {
         guard?.stop()
         guard = ObstacleGuard(d, frames, enabled = { guardOn }, onObstacle = { ttc, moving ->
             obstacleAt = System.currentTimeMillis()
+            // Il dérive vers l'obstacle tout seul : petit recul pour se dégager (sinon il reste collé)
+            if (!moving && d.positionHoldWeak() && d.idleForHold) thread(isDaemon = true) {
+                runCatching { d.velocity(-0.3, 0.0, 0.0, 0.0, 900) }
+            }
             a.obstacleStop(ttc, moving)
         }, log = ::log).also { it.start() }
     }
@@ -754,6 +804,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 a.addChat(Role.SYSTEM, "Connecté : ${d.name} (batterie ${d.battery() ?: "?"} %). L'IA est en pause : parle-lui, ou appuie sur « ▶ IA ». " +
                     "En intérieur, il faut un sol texturé et éclairé pour que le drone tienne sa position.")
                 a.addChat(Role.SYSTEM, "État du drone : ${dji.diagnostics()}")
+                ensureVisionPositioning(a)
                 // Image très sombre ? (pièce sombre, caméra masquée, ou vidéo mal décodée)
                 viewModelScope.launch(Dispatchers.IO) {
                     delay(6000)

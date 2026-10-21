@@ -153,6 +153,16 @@ public class DjiLink {
     /** Cap du drone (boussole), en degrés de -180 à 180. */
     public double heading() { return heading; }
 
+    /** Le drone ne tient pas sa position (mode ATTI, ou ni caméra du dessous ni mode optique annoncé). */
+    public boolean positionWeak() {
+        String m = flightMode.toUpperCase(java.util.Locale.ROOT);
+        if (m.contains("ATTI")) return true;
+        if (m.contains("OPTI") || m.contains("GPS")) return false;
+        return !vps;
+    }
+
+    public String flightModeName() { return flightMode.isEmpty() ? "?" : flightMode; }
+
     /** Le drone tient sa position avec la caméra du dessous. */
     public boolean vpsUsed() { return vps; }
 

@@ -24,8 +24,8 @@ android {
         applicationId = "com.bebopia.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 43
-        versionName = "3.4.3"
+        versionCode = 44
+        versionName = "3.4.4"
         manifestPlaceholders["DJI_API_KEY"] = djiApiKey
         buildConfigField("String", "GEMINI_KEY", "\"" + geminiKey + "\"")
         // Le kit DJI n'existe que pour les processeurs ARM (tous les téléphones récents).

@@ -45,6 +45,10 @@ class Agent(
         val LONG = setOf("search", "search_area", "go_look", "follow", "goto_point", "tour", "film", "retrace", "return_home",
             "survey", "pass_door", "search_house", "come_back", "spotlight", "mastershots", "hyperlapse")
 
+        /** Manœuvres automatiques interdites quand le drone dérive (ni GPS ni capteurs du dessous). */
+        val DRIFT_BLOCKED = setOf("survey", "search_house", "pass_door", "tour", "go_look", "search", "search_area", "film",
+            "mastershots", "hyperlapse", "goto_point", "come_back", "follow", "spotlight", "retrace")
+
         val STOP_WORDS = setOf("stop", "stoppe", "arrete", "arretes", "arretez", "pause", "halte", "stopper")
         val LAND_PHRASES = listOf("atterri", "pose toi", "pose-toi", "pose le drone")
         val YES_WORDS = setOf("oui", "ok", "okay", "go", "valide", "confirme", "d'accord", "vas-y", "vasy", "ouais")
@@ -803,6 +807,11 @@ class Agent(
             changed()
         }
         val result = try {
+            if (type in DRIFT_BLOCKED && drone.flying && !drone.hasGps && drone.positionHoldWeak()) {
+                "refusé : je dérive (pas de GPS et mes capteurs du dessous ne tiennent pas ma position). Une manœuvre automatique " +
+                    "(tour sur moi-même, trajet) me ferait finir dans un mur. Je reste sur place ; tu peux me déplacer pas à pas, " +
+                    "me faire atterrir, ou rallumer la lumière pour que mes capteurs reprennent."
+            } else
             when (action["type"] as? String) {
                 "takeoff" -> takeoffChecked()
                 "hand_launch" -> drone.handLaunch()
