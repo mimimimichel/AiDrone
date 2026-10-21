@@ -1193,6 +1193,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .put("activity", clean(s.activity))
             .put("rec", s.recording)
             .put("sticks", questActive)
+            .put("headPaused", d?.headPaused == true)
             .put("sticksMode", if (sticksFollowLook) "regard" else "libre")
             .put("indoor", s.indoor)
             .put("scene", runCatching { scene?.mapJson() }.getOrNull() ?: org.json.JSONObject.NULL)

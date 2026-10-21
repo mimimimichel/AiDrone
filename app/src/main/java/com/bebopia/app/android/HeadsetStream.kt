@@ -816,7 +816,8 @@ function drawOSD(){
   for(let i=0;i<5;i++){const on=sig!==null&&sig>i*20;o.fillStyle=on?(sig<30?AMB:ACC):'rgba(189,244,255,.15)';o.fillRect(px2+290+i*16,py+46-8-i*5,10,8+i*5);}
   tx('GUARD',px2+220,py+96,15,'rgba(189,244,255,.7)','left',700,4);
   {const tc=num(s.ttc,null);tx(!s.guardOn?'OFF':!s.guardWatching?'VEILLE':(tc===null||tc>9.9?'LIBRE':f1(tc)+' S'),px2+330,py+96,18,tc!==null&&tc<3?AMB:ICE,'left',600,2);}
-  tx('HEAD',px2+220,py+146,15,'rgba(189,244,255,.7)','left',700,4);tx(follow?'SUIVI':'COUPÉ',px2+330,py+146,18,follow?ICE:AMB,'left',600,2);
+  tx('HEAD',px2+220,py+146,15,'rgba(189,244,255,.7)','left',700,4);tx(s.headPaused?'AUTO':follow?'SUIVI':'COUPÉ',px2+330,py+146,18,s.headPaused?AMB:follow?ICE:AMB,'left',600,2);
+  if(s.headPaused)tx('TÊTE EN PAUSE · MANŒUVRE AUTO',cx,ty+124,16,AMB,'center',700,4);
   {const d=num(tel.homeDist,num(s.dist,0)), rad=Math.max(1,num(s.radius,15)), k=Math.min(1,d/rad);
     tx('RAYON',470,py+160,15,'rgba(189,244,255,.7)','left',700,4);o.fillStyle='rgba(189,244,255,.15)';o.fillRect(470,py+172,90,6);
     o.fillStyle=k>0.9?DNG:ACC;o.fillRect(470,py+172,90*k,6);}

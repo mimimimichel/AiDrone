@@ -119,8 +119,9 @@ Les messages entre crochets [Message de l'application…] viennent de l'applicat
                 "properties" to mapOf(
                     "type" to mapOf(
                         "type" to "STRING",
-                        "enum" to listOf("takeoff", "land", "move", "tilt_camera", "hover", "return_home"),
-                        "description" to "takeoff décoller, land atterrir, move se déplacer, tilt_camera incliner la caméra, " +
+                        "enum" to listOf("takeoff", "hand_launch", "land", "move", "tilt_camera", "hover", "return_home"),
+                        "description" to "takeoff décoller, hand_launch décollage lancé (le pilote lance le drone à la main, Bebop seulement), " +
+                            "land atterrir, move se déplacer, tilt_camera incliner la caméra, " +
                             "hover rester sur place, return_home revenir au point de décollage.",
                     ),
                     "forward" to num("move : mètres vers l'avant (négatif = reculer)."),

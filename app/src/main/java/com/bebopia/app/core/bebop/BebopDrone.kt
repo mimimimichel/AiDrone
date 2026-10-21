@@ -176,6 +176,20 @@ class BebopDrone(
 
     override fun lookHeading(): Double = com.bebopia.app.core.norm180(compass() + if (headRecent) notedHeadYaw.coerceIn(-35.0, 35.0) else 0.0)
 
+    override fun handLaunch(): String {
+        if (flying) return "déjà en vol"
+        if (!net.sendWithAck(BebopCmd.userTakeOff(true))) return "échec : le Bebop n'a pas reçu l'ordre"
+        log("décollage lancé : prêt, lance le drone vers le haut")
+        // Le drone attend qu'on le lance (état « décollage manuel »), puis se stabilise
+        val ok = waitForState(setOf(2, 3), 30_000)
+        if (!ok) {
+            net.sendWithAck(BebopCmd.userTakeOff(false))
+            return "décollage lancé annulé : le drone n'a pas été lancé dans les 30 secondes"
+        }
+        markAirborne()
+        return "décollage lancé réussi"
+    }
+
     override fun doTilt(degrees: Int) {
         repeat(3) {
             net.send(BebopCmd.cameraOrientation(degrees.toFloat(), 0f))

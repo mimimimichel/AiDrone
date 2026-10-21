@@ -35,7 +35,7 @@ class Agent(
 ) {
     companion object {
         /** Actions soumises à ton accord en mode validation (atterrir n'en a jamais besoin). */
-        val NEEDS_CONFIRM = setOf("takeoff", "move", "return_home", "tilt_camera", "search", "search_area",
+        val NEEDS_CONFIRM = setOf("takeoff", "hand_launch", "move", "return_home", "tilt_camera", "search", "search_area",
             "go_look", "follow", "goto_point", "tour", "film", "retrace", "survey", "pass_door", "search_house", "come_back")
         /** Actions refusées s'il n'y a pas d'image. */
         val NEEDS_IMAGE = setOf("takeoff", "move", "return_home", "search", "search_area", "go_look", "follow", "film", "goto_point", "tour",
@@ -74,6 +74,7 @@ class Agent(
             }
             "tilt_camera" -> "caméra à %.0f°".format(num(action, "degrees"))
             "takeoff" -> "décollage"
+            "hand_launch" -> "décollage lancé (à la main)"
             "search_area" -> "mission : chercher « ${action["target"] ?: "?"} » sur le terrain" +
                 (num(action, "radius_m").takeIf { it > 0 }?.let { " (rayon %.0f m)".format(it) } ?: "")
             "search" -> "chercher « ${action["target"] ?: "?"} »" + if (action["approach"] == true) " et m'en approcher" else ""
@@ -772,13 +773,17 @@ class Agent(
         steps++
         val type = action["type"] as? String
         currentAction = action
+        val headWas = drone.headPaused
         if (type in LONG) {
             activity = describe(action)
+            // Manœuvre automatique : la tête du pilote ne commande plus la caméra ni le cap (elle fausserait tout)
+            drone.headPaused = true
             changed()
         }
         val result = try {
             when (action["type"] as? String) {
                 "takeoff" -> drone.takeoff()
+                "hand_launch" -> drone.handLaunch()
                 "land" -> if (drone.indoor && lander != null && drone.flying) lander!!.land() else drone.land()
                 "move" -> try {
                     drone.moveRef = action["_vue"] as? Double
@@ -881,7 +886,7 @@ class Agent(
         } catch (e: Exception) {
             "échec : ${e.message}"
         } finally {
-            if (type in LONG) activity = null
+            if (type in LONG) { activity = null; drone.headPaused = headWas }
             currentAction = null
         }
         if (type in LONG && (result.startsWith("trouvé") || result.startsWith("arrivé"))) onSnap?.invoke(result.take(40))

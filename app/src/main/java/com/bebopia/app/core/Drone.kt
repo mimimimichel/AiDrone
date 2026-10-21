@@ -234,6 +234,13 @@ abstract class DroneBase(val limits: Limits) {
     open fun signalQuality(): Int? = null
 
 
+    /** Le drone vient de décoller autrement (lancé à la main) : remet la position estimée à zéro. */
+    protected fun markAirborne() {
+        x = 0.0; y = 0.0; heading = 0.0
+        z = 1.0
+        takeoffCompass = takeoffHeading()
+    }
+
     fun takeoff(): String {
         if (flying) return "déjà en vol"
         doTakeoff()
@@ -259,6 +266,12 @@ abstract class DroneBase(val limits: Limits) {
 
     /** Cap boussole au moment du décollage (0 sans boussole). */
     protected open fun takeoffHeading(): Double = 0.0
+
+    /**
+     * Décollage lancé : moteurs prêts, le drone démarre quand le pilote le lance vers le haut (Bebop 2).
+     * Pas possible sur les drones qui ne le prévoient pas.
+     */
+    open fun handLaunch(): String = "refusé : ce drone ne permet pas le décollage lancé (le Mavic Mini ne le prévoit pas : décollage normal)"
 
     /** Coupe les moteurs : le drone TOMBE. Dernier recours. */
     fun emergency(): String {
