@@ -279,6 +279,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         voice.init()
         voice.speakEnabled = speak
         voice.robot = robotVoice
+        BebopApp.takeLastCrash(getApplication())?.let { sysMessage("⚠️ L'appli a planté la dernière fois. Envoie ce message à Claude :\n$it") }
         sysMessage("Connecte le téléphone au Wi-Fi du Bebop (Skycontroller éteinte), puis appuie sur « Connecter le Bebop ». Ou essaie la simulation avec la caméra du téléphone.")
         if (geminiKey.isBlank() && apiKey.isBlank()) {
             sysMessage("Ajoute ta clé Gemini dans les réglages (⚙) : elle est gratuite sur aistudio.google.com/apikey (la même que pour Vr2).")

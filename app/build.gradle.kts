@@ -24,8 +24,8 @@ android {
         applicationId = "com.bebopia.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 40
-        versionName = "3.4"
+        versionCode = 41
+        versionName = "3.4.1"
         manifestPlaceholders["DJI_API_KEY"] = djiApiKey
         buildConfigField("String", "GEMINI_KEY", "\"" + geminiKey + "\"")
         // Le kit DJI n'existe que pour les processeurs ARM (tous les téléphones récents).
@@ -91,9 +91,6 @@ dependencies {
     // Détecteur d'objets sur le téléphone (sans Internet)
     implementation("com.google.mediapipe:tasks-vision:0.10.20")
     // Montage vidéo sur le téléphone (MasterShots)
-    implementation("androidx.media3:media3-transformer:1.4.1")
-    implementation("androidx.media3:media3-effect:1.4.1")
-    implementation("androidx.media3:media3-common:1.4.1")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
