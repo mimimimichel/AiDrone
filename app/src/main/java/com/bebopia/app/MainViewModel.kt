@@ -102,6 +102,8 @@ data class UiState(
     val activity: String? = null,
     val recording: Boolean = false,
     val autoRecord: Boolean = false,
+    /** Cadres à dessiner sur la vidéo (cible suivie, proposée, candidats, trouvée). */
+    val marks: List<com.bebopia.app.core.vision.Marks.Mark> = emptyList(),
 )
 
 /** Un point du diagnostic du Mavic : état (ok / attention / bloquant), titre, explication. */
@@ -240,6 +242,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     init {
         startDisplayGain()
         startNavTicks()
+        startTargetPreview()
         voice.init()
         voice.speakEnabled = speak
         voice.robot = robotVoice
@@ -317,6 +320,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             activity = a?.activity,
             recording = d?.recording ?: false,
             autoRecord = autoRecord,
+            marks = com.bebopia.app.core.vision.Marks.current(),
         )
     }
 
@@ -410,6 +414,49 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         agent?.autoReturn("signal radio faible ($q %)")
                     }
                 } else weakSignalSince = 0L
+            }
+        }
+    }
+
+    /**
+     * Pendant que l'IA attend ton « oui » pour suivre ou chercher quelque chose : cadre ce qu'elle compte suivre
+     * (orange, d'après Gemini) et les autres candidats vus par le téléphone (pointillés).
+     */
+    private fun startTargetPreview() {
+        viewModelScope.launch(Dispatchers.IO) {
+            var forKey = ""
+            var proposed: com.bebopia.app.core.vision.Box? = null
+            var askedAt = 0L
+            while (isActive) {
+                delay(450)
+                val p = agent?.pending
+                val type = p?.get("type") as? String
+                val target = (p?.get("target") as? String)?.trim().orEmpty()
+                if (p == null || type !in setOf("follow", "search", "search_area") || target.isEmpty()) {
+                    if (forKey.isNotEmpty()) { com.bebopia.app.core.vision.Marks.clear("preview"); forKey = ""; proposed = null }
+                    continue
+                }
+                val key = "$type|$target"
+                if (key != forKey) { forKey = key; proposed = null; askedAt = 0L }
+                val classes = com.bebopia.app.core.vision.CocoClasses.forTarget(target, p["classe"] as? String)
+                val local = if (classes != null) runCatching { localDetector?.detect(false) }.getOrNull().orEmpty()
+                    .filter { it.label in classes && it.score >= 0.35 } else emptyList()
+                // Ce que l'IA comprend par « le chien noir » : demandé à Gemini toutes les 3 s
+                if (geminiKey.isNotBlank() && System.currentTimeMillis() - askedAt > 3000) {
+                    askedAt = System.currentTimeMillis()
+                    val jpeg = agentEyes?.captureJpegBase64()
+                    if (jpeg != null) runCatching { vision.find(jpeg, target) }.getOrNull()?.let { d ->
+                        proposed = if (d.found && d.confidence >= 0.35) com.bebopia.app.core.vision.Box(d.cx, d.cy, d.w, d.h) else null
+                    }
+                }
+                // Si le téléphone voit le même objet, sa boîte (à jour) remplace celle de Gemini
+                val pr = proposed
+                val best = if (pr != null) local.maxByOrNull { it.box.iou(pr) }?.takeIf { it.box.iou(pr) > 0.25 } else if (local.size == 1) local[0] else null
+                val chosen = best?.box ?: pr
+                val marks = ArrayList<com.bebopia.app.core.vision.Marks.Mark>()
+                local.filter { it !== best }.forEach { marks.add(com.bebopia.app.core.vision.Marks.Mark(it.box, com.bebopia.app.core.vision.CocoClasses.french(it.label), com.bebopia.app.core.vision.Marks.Kind.CANDIDATE)) }
+                chosen?.let { marks.add(com.bebopia.app.core.vision.Marks.Mark(it, target, com.bebopia.app.core.vision.Marks.Kind.PROPOSED)) }
+                com.bebopia.app.core.vision.Marks.show("preview", marks, 1500)
             }
         }
     }
@@ -1070,12 +1117,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     .put("pending", a?.pending != null)
                 else null
             }.getOrNull() ?: org.json.JSONObject.NULL)
-            .put("track", agent?.follower?.let { f ->
-                f.box?.let { b ->
-                    org.json.JSONObject().put("cx", b.cx).put("cy", b.cy).put("w", b.w).put("h", b.h)
-                        .put("label", f.target ?: "").put("ok", System.currentTimeMillis() - f.confirmedAt < 4000)
+            .put("marks", org.json.JSONArray().apply {
+                s.marks.forEach { m ->
+                    put(org.json.JSONObject().put("cx", m.box.cx).put("cy", m.box.cy).put("w", m.box.w).put("h", m.box.h)
+                        .put("l", m.label).put("k", m.kind.name))
                 }
-            } ?: org.json.JSONObject.NULL)
+            })
             .put("chat", chat)
             .put("top", listOf(s.mode.name, s.battery?.let { "$it %" } ?: "").joinToString(" "))
             .toString()

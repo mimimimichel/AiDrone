@@ -431,7 +431,7 @@ function draw(){
 
 function drawHUD(s,tel){
   const cx=VX+VW/2, cy=VY+VH/2, ppd=VH/40;
-  drawTrack(g,s.track,VX,VY,VW,VH);
+  drawMarks(g,s.marks,VX,VY,VW,VH);
   // Horizon artificiel (assiette du drone)
   const pitch=num(tel.pitch,0), roll=num(tel.roll,0);
   g.save();g.translate(cx,cy);g.rotate(-roll*Math.PI/180);
@@ -642,14 +642,26 @@ function drawMap(c,cx,cy,R,tel,nav,mv){
   c.font='11px sans-serif';c.fillStyle=GREY;c.fillText(gps?'Imagerie © Esri':'sans GPS : position estimée',cx,cy+R+16);
 }
 
-/** Cadre autour de la cible suivie (vert : confirmée par l'IA il y a peu ; jaune : suivie par le téléphone seul). */
-function drawTrack(c,tr,X,Y,W2,H2){if(!tr)return;const col=tr.ok?'#7CFC9A':'#FFD54F';
-  const x=X+(tr.cx-tr.w/2)*W2, y=Y+(tr.cy-tr.h/2)*H2, w=tr.w*W2, h=tr.h*H2, k=Math.min(w,h)*0.3;
-  c.strokeStyle=col;c.lineWidth=5;c.beginPath();
-  c.moveTo(x,y+k);c.lineTo(x,y);c.lineTo(x+k,y);c.moveTo(x+w-k,y);c.lineTo(x+w,y);c.lineTo(x+w,y+k);
-  c.moveTo(x+w,y+h-k);c.lineTo(x+w,y+h);c.lineTo(x+w-k,y+h);c.moveTo(x+k,y+h);c.lineTo(x,y+h);c.lineTo(x,y+h-k);c.stroke();
-  c.font='bold 26px sans-serif';c.textAlign='left';c.lineWidth=6;c.strokeStyle='rgba(0,0,0,.85)';const lb='🎯 '+(tr.label||'');
-  c.strokeText(lb,x,y-10);c.fillStyle=col;c.fillText(lb,x,y-10);}
+/**
+ * Cadres sur la vidéo : FOLLOWING (suivie, confirmée par l'IA : bleu plein), TRACKING (suivie par le téléphone seul),
+ * PROPOSED (ce que l'IA compte suivre, attend ton oui : orange qui clignote), CANDIDATE (autres objets vus : pointillés),
+ * FOUND (trouvé pendant une recherche).
+ */
+function drawMarks(c,list,X,Y,W2,H2){if(!list||!list.length)return;const tm=performance.now();
+  for(const m of list){const x=X+(m.cx-m.w/2)*W2, y=Y+(m.cy-m.h/2)*H2, w=Math.max(16,m.w*W2), h=Math.max(16,m.h*H2), k=Math.min(w,h)*0.28;
+    const st={FOLLOWING:['#5FE1FF',4,'◉ SUIVI'],TRACKING:['#BDF4FF',3,'◌ SUIVI'],PROPOSED:['#FFB547',4,'CIBLE ?'],
+      FOUND:['#7CFFB2',4,'✓ TROUVÉ'],CANDIDATE:['rgba(189,244,255,.75)',2,'']}[m.k]||['#BDF4FF',2,''];
+    c.save();c.shadowColor='rgba(0,0,0,.8)';c.shadowBlur=6;c.strokeStyle=st[0];c.lineWidth=st[1];
+    if(m.k==='PROPOSED')c.globalAlpha=0.55+0.45*Math.abs(Math.sin(tm/260));
+    if(m.k==='CANDIDATE'){c.setLineDash([6,6]);c.strokeRect(x,y,w,h);c.setLineDash([]);}
+    else{c.beginPath();
+      c.moveTo(x,y+k);c.lineTo(x,y);c.lineTo(x+k,y);c.moveTo(x+w-k,y);c.lineTo(x+w,y);c.lineTo(x+w,y+k);
+      c.moveTo(x+w,y+h-k);c.lineTo(x+w,y+h);c.lineTo(x+w-k,y+h);c.moveTo(x+k,y+h);c.lineTo(x,y+h);c.lineTo(x,y+h-k);c.stroke();
+      // petite croix au centre de la cible
+      c.lineWidth=2;c.beginPath();c.moveTo(x+w/2-8,y+h/2);c.lineTo(x+w/2+8,y+h/2);c.moveTo(x+w/2,y+h/2-8);c.lineTo(x+w/2,y+h/2+8);c.stroke();}
+    const lb=(st[2]?st[2]+' · ':'')+String(m.l||'').toUpperCase().slice(0,26)+(m.k==='PROPOSED'?' — OUI / NON':'');
+    c.font='600 '+(m.k==='CANDIDATE'?18:24)+'px "Segoe UI",Roboto,sans-serif';c.letterSpacing='2px';c.textAlign='left';
+    c.fillStyle=st[0];c.fillText(lb,x,y-10);c.restore();}}
 
 /** Distance au sol du point visé (centre de l'image), d'après l'altitude et la nacelle. */
 function aimDist(s,tel){const gp=num(tel.gimbal,0), a=num(s.alt,0);if(gp>-6||a<0.5)return null;return a/Math.tan(-gp*Math.PI/180);}
@@ -680,7 +692,7 @@ function drawOSD(){
   if(frame)o.drawImage(frame,0,0,w,h);else{o.fillStyle=FAINT;o.font='300 44px sans-serif';o.textAlign='center';o.fillText('—  PAS DE VIDÉO  —',cx,cy-120);}
   // léger voile sombre sur les bords : les traits fins restent lisibles sur un ciel clair
   const vg=o.createRadialGradient(cx,cy,h*0.35,cx,cy,h*0.95);vg.addColorStop(0,'rgba(0,0,0,0)');vg.addColorStop(1,'rgba(0,10,18,.45)');o.fillStyle=vg;o.fillRect(0,0,w,h);
-  drawTrack(o,s.track,0,0,w,h);
+  drawMarks(o,s.marks,0,0,w,h);
   o.save();o.shadowColor='rgba(0,0,0,.75)';o.shadowBlur=6;o.lineCap='round';
   function ln(x1,y1,x2,y2,c,lw){o.strokeStyle=c||ICE;o.lineWidth=lw||2;o.beginPath();o.moveTo(x1,y1);o.lineTo(x2,y2);o.stroke();}
   function tx(str,x,y,size,color,align,weight,sp){o.font=(weight||500)+' '+size+'px "Segoe UI",Roboto,"Helvetica Neue",sans-serif';
@@ -822,7 +834,7 @@ async function statePoll(){
     await new Promise(r=>setTimeout(r,200));
   }
 }
-function paint(){if(voiceActive(state)||state.obstacle)dirty=true;if(dirty){draw();dirty=false;}requestAnimationFrame(paint);}
+function paint(){if(voiceActive(state)||state.obstacle||(state.marks&&state.marks.length))dirty=true;if(dirty){draw();dirty=false;}requestAnimationFrame(paint);}
 setInterval(()=>{dirty=true;},1000); // horloge
 frameLoop();statePoll();paint();
 
@@ -875,7 +887,7 @@ async function startVR(){
       fetch('/head?p='+pitch.toFixed(1)+'&y='+yaw.toFixed(1)+'&f='+(follow?1:0)+'&c='+(recenter?1:0),{cache:'no-store'})
         .then(r=>r.json()).then(s=>{state=s;dirty=true;}).catch(()=>{});
       recenter=false;}
-    if(voiceActive(state)||state.obstacle||audioOn)dirty=true;
+    if(voiceActive(state)||state.obstacle||audioOn||(state.marks&&state.marks.length))dirty=true;
     if(dirty||!uploaded){drawOSD();dirty=false;gl.bindTexture(gl.TEXTURE_2D,tex);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,V);uploaded=true;}
     const layer=session.renderState.baseLayer;
     gl.bindFramebuffer(gl.FRAMEBUFFER,layer.framebuffer);

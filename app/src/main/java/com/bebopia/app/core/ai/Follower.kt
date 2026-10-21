@@ -4,6 +4,7 @@ import com.bebopia.app.core.DroneBase
 import com.bebopia.app.core.vision.Box
 import com.bebopia.app.core.vision.CocoClasses
 import com.bebopia.app.core.vision.FastDetector
+import com.bebopia.app.core.vision.Marks
 import com.bebopia.app.core.vision.Seen
 import com.bebopia.app.core.vision.GrayFrames
 import com.bebopia.app.core.vision.TargetTracker
@@ -90,6 +91,7 @@ class Follower(
             drone.stopVelocity()
             target = null
             tracker.reset()
+            Marks.clear("follow")
         }
     }
 
@@ -109,6 +111,7 @@ class Follower(
             if (shouldStop()) throw Stop("suivi arrêté par le pilote")
             // Le détecteur du téléphone d'abord : une seule cible possible (et demande simple) -> pas besoin d'attendre l'IA.
             val local = candidates().ifEmpty { candidates(tiled = true) }
+            Marks.show("follow", local.map { Marks.Mark(it.box, CocoClasses.french(it.label), Marks.Kind.CANDIDATE) }, 2500)
             if (local.size == 1 || (local.isNotEmpty() && CocoClasses.isGeneric(t))) {
                 val best = local.maxBy { it.score }
                 if (best.score >= 0.5) {
@@ -124,6 +127,7 @@ class Follower(
                 val gb = Box(d.cx, d.cy, d.w, d.h)
                 val match = local.maxByOrNull { it.box.iou(gb) }?.takeIf { it.box.iou(gb) > 0.3 }?.box ?: gb
                 frames?.grab()?.let { g -> tracker.start(g, match) }
+                Marks.show("follow", listOf(Marks.Mark(match, t, Marks.Kind.FOLLOWING)), 1500)
                 confirmedAt = System.currentTimeMillis()
                 return d
             }
@@ -188,6 +192,9 @@ class Follower(
                 }
             }
             if (b != null) lastPos = b
+            // Cadre sur la vidéo : bleu plein si l'IA a confirmé la cible il y a peu, sinon suivi par le téléphone seul
+            if (b != null) Marks.show("follow", listOf(Marks.Mark(b, t,
+                if (System.currentTimeMillis() - confirmedAt < 4000) Marks.Kind.FOLLOWING else Marks.Kind.TRACKING)), 600)
 
             // Vérification par l'IA, en arrière-plan (ne ralentit pas le suivi)
             if (!checking.get() && t0 - lastCheck > CHECK_MS) {

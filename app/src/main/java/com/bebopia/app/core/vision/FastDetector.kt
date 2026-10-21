@@ -68,6 +68,21 @@ object CocoClasses {
 
     val ALL: Set<String> = GROUPS.flatMap { it.second }.toSet()
 
+    private val FRENCH = mapOf(
+        "person" to "personne", "dog" to "chien", "cat" to "chat", "horse" to "cheval", "cow" to "vache", "sheep" to "mouton",
+        "bird" to "oiseau", "bear" to "ours", "car" to "voiture", "truck" to "camion", "bus" to "bus", "motorcycle" to "moto",
+        "bicycle" to "vélo", "boat" to "bateau", "airplane" to "avion", "train" to "train", "sports ball" to "ballon",
+        "frisbee" to "frisbee", "kite" to "cerf-volant", "umbrella" to "parapluie", "backpack" to "sac à dos", "handbag" to "sac",
+        "suitcase" to "valise", "chair" to "chaise", "couch" to "canapé", "bench" to "banc", "dining table" to "table",
+        "bottle" to "bouteille", "cup" to "tasse", "wine glass" to "verre", "bowl" to "bol", "potted plant" to "plante",
+        "vase" to "vase", "teddy bear" to "peluche", "cell phone" to "téléphone", "remote" to "télécommande", "laptop" to "ordinateur",
+        "tv" to "écran", "keyboard" to "clavier", "book" to "livre", "clock" to "horloge", "skateboard" to "skate",
+        "surfboard" to "planche de surf", "tennis racket" to "raquette", "scissors" to "ciseaux", "refrigerator" to "frigo", "bed" to "lit",
+    )
+
+    /** Nom français d'une catégorie du détecteur (pour l'affichage). */
+    fun french(label: String): String = FRENCH[label] ?: label
+
     private fun norm(s: String) = Normalizer.normalize(s.lowercase(), Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "")
 
     /** Catégories à chercher pour [target] (null si le détecteur ne connaît pas ce genre d'objet). [hint] : catégorie donnée par l'IA. */

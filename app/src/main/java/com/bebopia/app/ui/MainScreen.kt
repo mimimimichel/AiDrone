@@ -65,6 +65,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -183,6 +185,7 @@ fun MainScreen(vm: MainViewModel) {
                 )
             }
             if (s.mode == Mode.BEBOP || s.mode == Mode.MAVIC || s.mode == Mode.SIM) {
+                MarksOverlay(s.marks)
                 Text(
                     statusLabel(s),
                     color = Color.White,
@@ -470,6 +473,56 @@ private fun ConnectPanel(connecting: Boolean, onConnect: () -> Unit, onMavic: ()
                 Button(onClick = onMavic) { Text("Mavic Mini") }
                 OutlinedButton(onClick = onSimulate) { Text("Simulation") }
             }
+        }
+    }
+}
+
+/** Cadres sur la vidéo : ce que le drone suit, ce qu'il propose de suivre, les candidats, ce qu'il a trouvé. */
+@Composable
+private fun MarksOverlay(marks: List<com.bebopia.app.core.vision.Marks.Mark>) {
+    if (marks.isEmpty()) return
+    // Clignotement du cadre « proposé » (attend ton oui)
+    val blink = androidx.compose.animation.core.rememberInfiniteTransition(label = "cible")
+    val alpha by blink.animateFloat(0.35f, 1f, androidx.compose.animation.core.infiniteRepeatable(
+        androidx.compose.animation.core.tween(500), androidx.compose.animation.core.RepeatMode.Reverse), label = "alpha")
+    val density = LocalContext.current.resources.displayMetrics.density
+    androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+        for (m in marks) {
+            val (col, label) = when (m.kind) {
+                com.bebopia.app.core.vision.Marks.Kind.FOLLOWING -> Color(0xFF5FE1FF) to "◉ SUIVI · "
+                com.bebopia.app.core.vision.Marks.Kind.TRACKING -> Color(0xFFBDF4FF) to "◌ SUIVI · "
+                com.bebopia.app.core.vision.Marks.Kind.PROPOSED -> Color(0xFFFFB547) to "CIBLE ? · "
+                com.bebopia.app.core.vision.Marks.Kind.FOUND -> Color(0xFF7CFFB2) to "✓ TROUVÉ · "
+                com.bebopia.app.core.vision.Marks.Kind.CANDIDATE -> Color(0xBFBDF4FF) to ""
+            }
+            val a = if (m.kind == com.bebopia.app.core.vision.Marks.Kind.PROPOSED) alpha else 1f
+            val x = ((m.box.cx - m.box.w / 2) * size.width).toFloat()
+            val y = ((m.box.cy - m.box.h / 2) * size.height).toFloat()
+            val w = (m.box.w * size.width).toFloat().coerceAtLeast(12f)
+            val h = (m.box.h * size.height).toFloat().coerceAtLeast(12f)
+            val sw = if (m.kind == com.bebopia.app.core.vision.Marks.Kind.CANDIDATE) 1.5f * density else 2.5f * density
+            if (m.kind == com.bebopia.app.core.vision.Marks.Kind.CANDIDATE) {
+                drawRect(col, androidx.compose.ui.geometry.Offset(x, y), androidx.compose.ui.geometry.Size(w, h),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(sw,
+                        pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(10f, 8f))))
+            } else {
+                val k = minOf(w, h) * 0.28f
+                fun seg(x1: Float, y1: Float, x2: Float, y2: Float) =
+                    drawLine(col.copy(alpha = a), androidx.compose.ui.geometry.Offset(x1, y1), androidx.compose.ui.geometry.Offset(x2, y2), sw)
+                seg(x, y, x + k, y); seg(x, y, x, y + k)
+                seg(x + w, y, x + w - k, y); seg(x + w, y, x + w, y + k)
+                seg(x, y + h, x + k, y + h); seg(x, y + h, x, y + h - k)
+                seg(x + w, y + h, x + w - k, y + h); seg(x + w, y + h, x + w, y + h - k)
+            }
+            val text = label + m.label.uppercase().take(22) + if (m.kind == com.bebopia.app.core.vision.Marks.Kind.PROPOSED) " — OUI / NON" else ""
+            drawContext.canvas.nativeCanvas.drawText(text, x, (y - 6 * density).coerceAtLeast(12 * density),
+                android.graphics.Paint().apply {
+                    color = android.graphics.Color.argb((a * 255).toInt(), (col.red * 255).toInt(), (col.green * 255).toInt(), (col.blue * 255).toInt())
+                    textSize = (if (m.kind == com.bebopia.app.core.vision.Marks.Kind.CANDIDATE) 10 else 12) * density
+                    isFakeBoldText = true
+                    isAntiAlias = true
+                    setShadowLayer(4f, 0f, 0f, android.graphics.Color.BLACK)
+                })
         }
     }
 }

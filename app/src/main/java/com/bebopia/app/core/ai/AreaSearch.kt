@@ -256,8 +256,10 @@ class AreaSearch(
         val c = classes ?: return null
         checkStop()
         Thread.sleep(if (simulation) 300 else 700) // image nette après la rotation
-        return runCatching { f.detect(tiled = true) }.getOrDefault(emptyList())
-            .filter { it.label in c && it.score >= 0.4 }.maxByOrNull { it.score }
+        val hits = runCatching { f.detect(tiled = true) }.getOrDefault(emptyList()).filter { it.label in c && it.score >= 0.4 }
+        if (hits.isNotEmpty()) com.bebopia.app.core.vision.Marks.show("search",
+            hits.map { com.bebopia.app.core.vision.Marks.Mark(it.box, com.bebopia.app.core.vision.CocoClasses.french(it.label), com.bebopia.app.core.vision.Marks.Kind.CANDIDATE) }, 3000)
+        return hits.maxByOrNull { it.score }
     }
 
     /** Une piste incertaine : se tourner vers elle, s'en rapprocher et regarder à nouveau. */
@@ -298,7 +300,11 @@ class AreaSearch(
         if (frame == null) throw Abort("mission arrêtée : plus d'image de la caméra")
         checkStop()
         return try {
-            detector.find(frame, target)
+            detector.find(frame, target).also { d ->
+                if (d.found) com.bebopia.app.core.vision.Marks.show("search", listOf(com.bebopia.app.core.vision.Marks.Mark(
+                    com.bebopia.app.core.vision.Box(d.cx, d.cy, d.w, d.h), target,
+                    if (d.confidence >= 0.5) com.bebopia.app.core.vision.Marks.Kind.FOUND else com.bebopia.app.core.vision.Marks.Kind.CANDIDATE)), 5000)
+            }
         } catch (e: Exception) {
             throw Abort("mission arrêtée : analyse d'image impossible (${e.message})")
         }

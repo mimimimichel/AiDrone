@@ -111,7 +111,11 @@ class ObjectFinder(
         if (frame == null) throw Abort("recherche impossible : pas d'image de la caméra")
         checkStop()
         return try {
-            detector.find(frame, target)
+            detector.find(frame, target).also { d ->
+                if (d.found) com.bebopia.app.core.vision.Marks.show("search", listOf(com.bebopia.app.core.vision.Marks.Mark(
+                    com.bebopia.app.core.vision.Box(d.cx, d.cy, d.w, d.h), target,
+                    if (d.confidence >= 0.5) com.bebopia.app.core.vision.Marks.Kind.FOUND else com.bebopia.app.core.vision.Marks.Kind.CANDIDATE)), 5000)
+            }
         } catch (e: Exception) {
             throw Abort("recherche impossible : ${e.message}")
         }
