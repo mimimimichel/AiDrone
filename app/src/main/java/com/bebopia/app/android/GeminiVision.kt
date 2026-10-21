@@ -104,7 +104,8 @@ class GeminiVision(
           "target_x":{"type":"integer"},
           "target_distance_m":{"type":"number"},
           "target_description":{"type":"string"},
-          "summary":{"type":"string","description":"une phrase : ce que montre cette vue"}
+          "summary":{"type":"string","description":"une phrase : ce que montre cette vue"},
+          "room_type":{"type":"string","description":"type de pièce en un ou deux mots (salon, cuisine, chambre, couloir, entrée, salle de bain, bureau, garage, escalier, jardin…)"}
         },"required":["indoor","free_ahead_m","items","target_visible","summary"]}
         """.trimIndent())
 
@@ -155,6 +156,7 @@ class GeminiVision(
                     j.optDouble("free_ahead_m", Double.NaN).takeIf { !it.isNaN() && it >= 0 },
                     j.optDouble("ceiling_above_m", -1.0).takeIf { it > 0 },
                     items, tgt, null, null, j.optString("summary"),
+                    j.optString("room_type").trim().lowercase().takeIf { it.isNotEmpty() },
                 )
             } catch (e: ModelUnavailable) {
                 last = e

@@ -32,6 +32,27 @@ class Surveyor(
     private class Stop(msg: String) : Exception(msg)
     private val pool = Executors.newFixedThreadPool(3)
 
+    /** Regarde sous le drone (caméra vers le sol) : hauteur libre, null si impossible. */
+    fun lookDown(): Double? {
+        if (!drone.flying) return null
+        val wasPaused = drone.headPaused
+        drone.headPaused = true
+        val tilt0 = drone.cameraTilt.toDouble()
+        return try {
+            report("👇 Je regarde sous moi avant de descendre")
+            drone.tiltCamera(-80.0)
+            if (simulation) report("(Simulation) Pointe le téléphone vers le sol")
+            val v = runCatching { analyzer.analyze(capture(), null, true, hfovDeg) }.getOrNull() ?: return null
+            memory.setBelowAt(drone.positionNE(), v.belowM, (if (v.belowClear == false) "attention : " else "") + v.summary)
+            if (v.belowClear == false) (v.belowM ?: 0.0).coerceAtMost(0.3) else v.belowM
+        } catch (e: Stop) {
+            null
+        } finally {
+            drone.headPaused = wasPaused
+            runCatching { drone.tiltCamera(tilt0) }
+        }
+    }
+
     fun survey(target: String?, climbM: Double? = null, lookDown: Boolean = true): SurveyResult {
         if (!drone.flying) return SurveyResult(null, null, null, "refusé : le drone est au sol, décolle d'abord", null)
         val wasPaused = drone.headPaused
@@ -124,8 +145,10 @@ class Surveyor(
             }
         }
         memory.setFreeSpace(pos, sectors)
+        val types = jobs.mapNotNull { runCatching { it.second.get(1, TimeUnit.SECONDS).roomType }.getOrNull() }
+        memory.recordRoom(pos, sectors, types.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key)
         if (ceilings.isNotEmpty()) memory.setCeiling(ceilings.sorted()[ceilings.size / 2])
-        below?.let { memory.setBelow(it.belowM, (if (it.belowClear == false) "attention : " else "") + it.summary) }
+        below?.let { memory.setBelowAt(drone.positionNE(), it.belowM, (if (it.belowClear == false) "attention : " else "") + it.summary) }
         val indoor = if (indoorVotes.isEmpty()) null else indoorVotes.count { it } * 2 > indoorVotes.size
         indoor?.let(onIndoor)
         tBearing?.let { b ->

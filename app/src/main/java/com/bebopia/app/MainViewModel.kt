@@ -439,8 +439,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val d = drone ?: continue
                 runCatching { nav?.tick() }
                 if (questActive && System.currentTimeMillis() - questLastActive > 1000) questActive = false
-                // Nouveau vol : la mémoire de la scène repart de zéro
+                // Nouveau vol : la mémoire de la scène repart de zéro ; fin de vol : le plan des pièces va dans la mémoire de l'IA
                 if (d.flying && !wasFlyingTick) scene?.clear()
+                if (!d.flying && wasFlyingTick) scene?.roomsSummary()?.takeIf { it.isNotBlank() && (scene?.roomCount() ?: 0) >= 1 }?.let { plan ->
+                    memory.add("Plan des pièces repéré pendant le vol (depuis le point de décollage) : $plan", d.homeGps() ?: d.gps())
+                }
                 wasFlyingTick = d.flying
                 // Intérieur ou extérieur
                 val indoorNow = when (envMode) {

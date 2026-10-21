@@ -25,6 +25,12 @@ class SceneItem(
     @Volatile var failed = false
 }
 
+/** Une pièce repérée : forme (zone libre vue depuis le point de repérage), type, et les pièces voisines par les portes. */
+class Room(val id: Int, var type: String, val cn: Double, val ce: Double, var outline: List<Pair<Double, Double>>, val seenAt: Long) {
+    /** Portes vers d'autres pièces : (label de la porte, id de la pièce). */
+    val links = ArrayList<Pair<String, Int>>()
+}
+
 /**
  * Mémoire de la scène : ce que le drone a vu lors de ses repérages (portes, murs, meubles, cible…)
  * et la place libre dans chaque direction, mesurée depuis le point du repérage.
@@ -41,9 +47,81 @@ class SceneMemory(private val indoorMargin: () -> Boolean) : SpaceGuard {
         private set
     @Volatile var belowNote: String = ""
         private set
+    @Volatile var belowAt = 0L
+        private set
+    private var belowPos = 0.0 to 0.0
+
+    // ---- plan des pièces ----
+    private val rooms = ArrayList<Room>()
+    @Volatile var currentRoom: Room? = null
+        private set
+    /** Porte franchie depuis le dernier repérage : le prochain repérage décrit une nouvelle pièce. */
+    private var crossed: String? = null
+    @Volatile var lastSurveyAt = 0L
+        private set
+    private var lastSurveyPos = 0.0 to 0.0
+
+    /** Repérage encore valable (moins de [maxAgeMs], et le drone n'a pas bougé de plus de [maxMoveM]). */
+    fun surveyFresh(pos: Pair<Double, Double>, maxAgeMs: Long = 120_000, maxMoveM: Double = 2.0): Boolean = synchronized(this) {
+        lastSurveyAt > 0 && System.currentTimeMillis() - lastSurveyAt < maxAgeMs && crossed == null &&
+            hypot(pos.first - lastSurveyPos.first, pos.second - lastSurveyPos.second) < maxMoveM
+    }
+
+    /** Hauteur libre sous le drone, si on l'a regardée récemment (moins d'une minute, sans bouger de plus d'un mètre). */
+    fun belowFresh(pos: Pair<Double, Double>): Double? = synchronized(this) {
+        if (System.currentTimeMillis() - belowAt > 60_000) return null
+        if (hypot(pos.first - belowPos.first, pos.second - belowPos.second) > 1.0) return null
+        belowM
+    }
+
+    fun setBelowAt(pos: Pair<Double, Double>, m: Double?, note: String) = synchronized(this) {
+        belowM = m; belowNote = note; belowAt = System.currentTimeMillis(); belowPos = pos
+    }
+
+    /** Le drone vient de passer une porte. */
+    fun crossedDoor(label: String) = synchronized(this) { crossed = label }
+
+    /**
+     * Repérage terminé à [pos] : même pièce que la courante (pas de porte franchie, à moins de 2,5 m) -> mise à jour,
+     * sinon nouvelle pièce, reliée à la précédente par la porte franchie.
+     */
+    fun recordRoom(pos: Pair<Double, Double>, sectors: List<Pair<Double, Double>>, type: String?) = synchronized(this) {
+        val outline = sectors.groupBy { (Math.round(it.first / 45.0) * 45).toInt() }
+            .map { (_, v) -> v.minBy { it.second } }.sortedBy { ((it.first % 360) + 360) % 360 }
+            .map { (b, d) -> project(pos, b, d.coerceAtMost(12.0)) }
+        val cur = currentRoom
+        val known = rooms.firstOrNull { hypot(it.cn - pos.first, it.ce - pos.second) < 2.5 }
+        val room = if (crossed == null && cur != null && hypot(cur.cn - pos.first, cur.ce - pos.second) < 2.5) cur
+            else known ?: Room(rooms.size + 1, type ?: "pièce", pos.first, pos.second, outline, System.currentTimeMillis()).also { rooms.add(it) }
+        if (outline.size >= 3) room.outline = outline
+        if (type != null && (room.type == "pièce" || room === cur)) room.type = type
+        val door = crossed
+        if (door != null && cur != null && cur !== room) {
+            if (cur.links.none { it.second == room.id }) cur.links.add(door to room.id)
+            if (room.links.none { it.second == cur.id }) room.links.add(door to cur.id)
+        }
+        crossed = null
+        currentRoom = room
+        lastSurveyAt = System.currentTimeMillis()
+        lastSurveyPos = pos
+    }
+
+    fun roomCount(): Int = synchronized(this) { rooms.size }
+
+    /** Le plan des pièces en une phrase (pour l'IA et pour sa mémoire). */
+    fun roomsSummary(): String = synchronized(this) {
+        if (rooms.isEmpty()) return ""
+        rooms.joinToString(" ; ") { r ->
+            val name = "${r.type} (pièce ${r.id})"
+            val links = r.links.joinToString(", ") { (d, id) -> "par « $d » vers ${rooms.firstOrNull { it.id == id }?.type ?: "?"} (pièce $id)" }
+            val inside = items.filter { it.kind in setOf("meuble", "cible", "escalier") && hypot(it.n - r.cn, it.e - r.ce) < 4 }.take(5).joinToString(", ") { it.label }
+            name + (if (r === currentRoom) " [ici]" else "") + (if (links.isNotEmpty()) " : $links" else "") + (if (inside.isNotEmpty()) " ; contient : $inside" else "")
+        }
+    }
 
     fun clear() = synchronized(this) {
         items.clear(); free.clear(); ceiling = null; belowM = null; belowNote = ""
+        rooms.clear(); currentRoom = null; crossed = null; lastSurveyAt = 0L; belowAt = 0L
     }
 
     /** Nouveau repérage : remplace la place libre (les objets vus restent, fusionnés). */
@@ -108,6 +186,7 @@ class SceneMemory(private val indoorMargin: () -> Boolean) : SpaceGuard {
             sb.append(". ")
         }
         ceiling?.let { sb.append("Plafond estimé à %.1f m d'altitude. ".format(it)) }
+        if (rooms.isNotEmpty()) sb.append("Plan des pièces : ").append(roomsSummary()).append(". ")
         belowM?.let { sb.append("Sous le drone : %.1f m libres%s. ".format(it, if (belowNote.isNotBlank()) " ($belowNote)" else "")) }
         val list = items.sortedBy { hypot(it.n - pos.first, it.e - pos.second) }.take(25)
         if (list.isNotEmpty()) {
@@ -126,7 +205,13 @@ class SceneMemory(private val indoorMargin: () -> Boolean) : SpaceGuard {
         items.forEach { i -> it2.put(JSONArray().put(r1(i.n)).put(r1(i.e)).put(i.label).put(i.kind).put(i.traversed)) }
         val fr = JSONArray()
         if (System.currentTimeMillis() - freeAt < 180_000) free.forEach { (b, d) -> fr.put(JSONArray().put(r1(b)).put(r1(d))) }
-        JSONObject().put("items", it2).put("free", fr).put("o", JSONArray().put(r1(origin.first)).put(r1(origin.second)))
+        val rm = JSONArray()
+        rooms.forEach { r ->
+            val pts = JSONArray()
+            r.outline.forEach { (n, e) -> pts.put(JSONArray().put(r1(n)).put(r1(e))) }
+            rm.put(JSONArray().put(r.type).put(pts).put(r1(r.cn)).put(r1(r.ce)).put(r === currentRoom))
+        }
+        JSONObject().put("items", it2).put("free", fr).put("o", JSONArray().put(r1(origin.first)).put(r1(origin.second))).put("rooms", rm)
     }
 
     private fun r1(v: Double) = (v * 10).roundToInt() / 10.0

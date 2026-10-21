@@ -402,6 +402,14 @@ class Agent(
             idle = false
             lastText = "Plan lancé (mode confiance)"
             system("Mode confiance : plan lancé directement (${steps.size} étapes). Dis « stop » à tout moment.")
+            if (needsSurvey()) {
+                thread(isDaemon = true) {
+                    val r = execute(mapOf("type" to "survey"))
+                    onEvent?.invoke("Repérage fait avant ton plan : $r. Adapte le plan si besoin, puis commence l'étape 1.", true)
+                }
+                return "plan validé automatiquement (mode confiance). L'application fait d'abord un repérage des lieux (environ 30 s) : " +
+                    "dis-le au pilote en une phrase et attends son résultat avant d'agir."
+            }
             return "plan validé automatiquement (mode confiance) : explique-le en une phrase et commence l'étape 1 tout de suite."
         }
         plan = Plan(goal.ifBlank { "objectif du pilote" }, steps.map { PlanStep(it) })
@@ -420,6 +428,15 @@ class Agent(
         idle = false
         lastText = "Plan lancé"
         system("Plan validé : l'IA pilote et exécute les étapes. Dis « stop » à tout moment.")
+        if (needsSurvey()) {
+            // Regarder avant d'agir : repérage complet avant la première étape
+            thread(isDaemon = true) {
+                val r = execute(mapOf("type" to "survey"))
+                onEvent?.invoke("Le pilote a validé ton plan. L'application a d'abord repéré les lieux : $r. " +
+                    "Adapte ton plan si ce repérage change quelque chose (dis-le), puis commence l'étape 1 et appelle plan_progress.", true)
+            }
+            return
+        }
         onEvent?.invoke(
             "Le pilote a validé ton plan, tu peux piloter. Commence l'étape 1 : regarde l'image, agis, " +
                 "puis vérifie sur la nouvelle image et appelle plan_progress.", true,
@@ -481,6 +498,13 @@ class Agent(
             plan = null
             changed()
         }
+    }
+
+    /** Faut-il un repérage avant d'agir (en vol, pas de repérage récent ici) ? */
+    private fun needsSurvey(): Boolean {
+        val sc = scene ?: return false
+        if (surveyor == null || !drone.flying) return false
+        return !sc.surveyFresh(drone.positionNE())
     }
 
     /** Le plan pour drone_status. */
@@ -750,6 +774,28 @@ class Agent(
                     drone.moveRef = action["_vue"] as? Double
                     val f0 = num(action, "forward")
                     val r0 = num(action, "right")
+                    var up = num(action, "up")
+                    val here = drone.positionNE()
+                    // En intérieur, sans repérage récent : pas de déplacement à l'aveugle sur le côté ou en arrière
+                    val blind = drone.indoor && scene != null && surveyor != null && !scene!!.surveyFresh(here) &&
+                        (kotlin.math.abs(r0) > 0.05 || f0 < -0.35) // reculer de 30 cm (d'où il vient) reste permis
+                    // Avant de descendre : regarder ce qu'il y a dessous
+                    var belowNote = ""
+                    if (up < -0.25 && surveyor != null) {
+                        val below = scene?.belowFresh(here) ?: surveyor!!.lookDown()
+                        if (below != null) {
+                            val maxDown = (below - 0.3).coerceAtLeast(0.0)
+                            if (-up > maxDown) {
+                                up = -maxDown
+                                belowNote = " (descente limitée à %.1f m : %.1f m libres dessous)".format(maxDown, below)
+                            }
+                        }
+                    }
+                    if (blind) "refusé : en intérieur, je ne vais pas sur le côté ni en arrière sans repérage récent " +
+                        "(je ne vois pas ce qu'il y a). Fais d'abord un repérage (survey), ou avance vers ce que tu vois."
+                    else if (up > -0.05 && num(action, "up") < -0.25 && kotlin.math.abs(f0) < 0.05 && kotlin.math.abs(r0) < 0.05 && num(action, "yaw") == 0.0)
+                        "refusé : pas de place pour descendre (sol ou objet juste dessous)$belowNote"
+                    else {
                     // Vérification par l'image seulement si la caméra regarde dans la direction du déplacement
                     // (le pilote peut regarder ailleurs avec le casque).
                     val dist = kotlin.math.hypot(f0, r0)
@@ -759,8 +805,9 @@ class Agent(
                     if (refusal != null) refusal
                     else {
                         val k = if (dist > 0) (ok / dist).coerceIn(0.0, 1.0) else 1.0
-                        val r = drone.move(f0 * k, r0 * k, num(action, "up"), num(action, "yaw"))
+                        val r = drone.move(f0 * k, r0 * k, up, num(action, "yaw")) + belowNote
                         if (k < 0.99) r + " (raccourci à %.1f m à cause d'un obstacle)".format(ok) else r
+                    }
                     }
                 } finally {
                     drone.moveRef = null

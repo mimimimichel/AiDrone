@@ -17,6 +17,8 @@ class ViewReport(
     val belowM: Double?,
     val belowClear: Boolean?,
     val summary: String,
+    /** Type de pièce (salon, cuisine, couloir…), si on le reconnaît. */
+    val roomType: String? = null,
 )
 
 /** Analyse une vue (JPEG base64) : horizontale (down = false) ou vers le sol. Bloquant. */

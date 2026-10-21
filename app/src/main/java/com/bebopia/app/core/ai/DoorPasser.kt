@@ -156,6 +156,7 @@ class DoorPasser(
             left -= s
         }
         known?.traversed = true
+        memory.crossedDoor(known?.label ?: desc)
         // Nouvelle pièce : l'ancienne place libre ne vaut plus
         memory.setFreeSpace(drone.positionNE(), emptyList())
         val p = drone.positionNE()

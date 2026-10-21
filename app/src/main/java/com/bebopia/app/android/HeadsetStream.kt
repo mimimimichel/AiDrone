@@ -613,6 +613,12 @@ function drawMap(c,cx,cy,R,tel,nav,mv,scene){
   const P=(n,e)=>[(e-pos[1])*sc,-(n-pos[0])*sc];
   // Repérage : place libre (zone verte) et ce qui a été vu (portes, cible, murs et meubles)
   if(scene){const fr=scene.free||[], o0=scene.o||[0,0];
+    // Plan des pièces : contour de chaque pièce repérée, son nom ; la pièce actuelle en plus clair
+    for(const r of (scene.rooms||[])){const pts=(r[1]||[]).map(q=>P(q[0],q[1]));if(pts.length<3)continue;
+      c.fillStyle=r[4]?'rgba(95,225,255,.10)':'rgba(189,244,255,.05)';c.strokeStyle=r[4]?'rgba(95,225,255,.75)':'rgba(189,244,255,.4)';c.lineWidth=1.5;
+      c.beginPath();pts.forEach((p,i)=>i?c.lineTo(p[0],p[1]):c.moveTo(p[0],p[1]));c.closePath();c.fill();c.stroke();
+      const [lx,ly]=P(r[2],r[3]);c.save();c.translate(lx,ly);c.rotate(hd);c.font='600 11px sans-serif';c.textAlign='center';c.fillStyle=r[4]?ACC:'rgba(189,244,255,.7)';
+      c.fillText(String(r[0]).toUpperCase(),0,-6);c.restore();}
     if(fr.length>2){const pts=fr.slice().sort((a,b)=>a[0]-b[0]).map(q=>P(o0[0]+q[1]*Math.cos(q[0]*Math.PI/180),o0[1]+q[1]*Math.sin(q[0]*Math.PI/180)));
       c.fillStyle='rgba(124,255,178,.14)';c.strokeStyle='rgba(124,255,178,.6)';c.lineWidth=1.5;c.beginPath();pts.forEach((p,i)=>i?c.lineTo(p[0],p[1]):c.moveTo(p[0],p[1]));c.closePath();c.fill();c.stroke();}
     for(const q of (scene.items||[])){const [x,y]=P(q[0],q[1]);

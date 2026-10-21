@@ -79,7 +79,7 @@ class House {
         if (abs(rd) < hfovDeg / 2) items.add(ViewItem("porte du couloir", "porte", 0.5 + rd / hfovDeg, dd, doorW, true))
         val (rk, dk) = rel(j, keys.first, keys.second)
         if (target != null && room(p.first) == 2 && abs(rk) < hfovDeg / 2) tgt = ViewItem("clés sur la commode", "cible", 0.5 + rk / hfovDeg, dk, null, null)
-        ViewReport(true, free, 1.5, items, tgt, null, null, "vue")
+        ViewReport(true, free, 1.5, items, tgt, null, null, "vue", if (room(pn) == 1) "salon" else "couloir")
     }
 
     /** « Où est la porte ? » sur l'image, d'après la géométrie. */
@@ -157,9 +157,25 @@ class IndoorTest {
         val r = hs.run("clés")
         println(r)
         assertTrue(r, r.contains("trouvé") && r.contains("pièce 2"))
+        // Plan des pièces : salon et couloir, reliés par la porte
+        assertEquals(2, mem.roomCount())
+        val plan = mem.roomsSummary()
+        println(plan)
+        assertTrue(plan, plan.contains("salon") && plan.contains("couloir") && plan.contains("porte du couloir"))
         val back = hs.comeBack()
         println(back)
         assertTrue(back, back.startsWith("revenu"))
         assertTrue("revenu dans la pièce 1", d.positionNE().first < h.doorN)
+    }
+
+    @Test fun looksBelowBeforeDescending() {
+        val h = House()
+        val d = flying()
+        val mem = SceneMemory { true }
+        val sv = Surveyor(d, h.eyes(d), com.bebopia.app.core.ai.SceneAnalyzer { _, _, down, _ ->
+            ViewReport(null, null, null, emptyList(), null, if (down) 0.6 else null, down, "table basse dessous") }, mem, h.hfov, false, { false }, {})
+        // 1 m d'altitude, une table à 0,6 m dessous : on ne descend que de 0,3 m
+        assertEquals(0.6, sv.lookDown()!!, 1e-6)
+        assertEquals(0.6, mem.belowFresh(d.positionNE())!!, 1e-6)
     }
 }
