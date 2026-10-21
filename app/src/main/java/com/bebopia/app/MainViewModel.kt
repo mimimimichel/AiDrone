@@ -270,27 +270,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    init {
-        startDisplayGain()
-        startNavTicks()
-        startTerrainLoop()
-        startTargetPreview()
-        startGestures()
-        voice.init()
-        voice.speakEnabled = speak
-        voice.robot = robotVoice
-        BebopApp.takeLastCrash(getApplication())?.let { sysMessage("⚠️ L'appli a planté la dernière fois. Envoie ce message à Claude :\n$it") }
-        sysMessage("Connecte le téléphone au Wi-Fi du Bebop (Skycontroller éteinte), puis appuie sur « Connecter le Bebop ». Ou essaie la simulation avec la caméra du téléphone.")
-        if (geminiKey.isBlank() && apiKey.isBlank()) {
-            sysMessage("Ajoute ta clé Gemini dans les réglages (⚙) : elle est gratuite sur aistudio.google.com/apikey (la même que pour Vr2).")
-        }
-        viewModelScope.launch {
-            while (isActive) {
-                refresh()
-                delay(400)
-            }
-        }
-    }
 
     private fun log(msg: String) {
         Log.i("BebopIA", msg)
@@ -1729,5 +1708,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         const val DEFAULT_MODEL = "claude-sonnet-5-5"
+    }
+
+    // Démarrage : en dernier, une fois toutes les propriétés créées (sinon plantage au lancement).
+    init {
+        startDisplayGain()
+        startNavTicks()
+        startTerrainLoop()
+        startTargetPreview()
+        startGestures()
+        voice.init()
+        voice.speakEnabled = speak
+        voice.robot = robotVoice
+        sysMessage("Connecte le téléphone au Wi-Fi du Bebop (Skycontroller éteinte), puis appuie sur « Connecter le Bebop ». Ou essaie la simulation avec la caméra du téléphone.")
+        if (geminiKey.isBlank() && apiKey.isBlank()) {
+            sysMessage("Ajoute ta clé Gemini dans les réglages (⚙) : elle est gratuite sur aistudio.google.com/apikey (la même que pour Vr2).")
+        }
+        viewModelScope.launch {
+            while (isActive) {
+                refresh()
+                delay(400)
+            }
+        }
     }
 }
