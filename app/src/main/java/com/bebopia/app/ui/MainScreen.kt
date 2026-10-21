@@ -705,6 +705,16 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
                 SettingSwitch("Le drone parle à voix haute", speak) { speak = it }
                 SettingSwitch("Voix de robot", robotVoice) { robotVoice = it }
                 SettingSwitch("🎬 Filmer chaque vol en entier (carte mémoire du drone)", s.autoRecord) { vm.changeAutoRecord(it) }
+                Text("Lieu : " + when (s.envMode) { "interieur" -> "intérieur (imposé)"; "exterieur" -> "extérieur (imposé)"; else -> "automatique" + if (s.indoor) " — intérieur détecté" else "" },
+                    modifier = Modifier.padding(top = 12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for ((m, l) in listOf("auto" to "Auto", "interieur" to "🏠 Intérieur", "exterieur" to "🌳 Extérieur")) {
+                        if (s.envMode == m) Button(onClick = {}) { Text(l, fontSize = 12.sp) }
+                        else OutlinedButton(onClick = { vm.changeEnvMode(m) }) { Text(l, fontSize = 12.sp) }
+                    }
+                }
+                Text("En intérieur : pas de 30 cm, 0,3 m/s, jamais à moins de 50 cm du plafond, et les déplacements qui iraient dans un mur (d'après le repérage) sont raccourcis ou refusés.",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("📔 Journal des vols (résumés et photos)", modifier = Modifier.weight(1f))
                     TextButton(onClick = { showJournal = true }) { Text("Ouvrir") }

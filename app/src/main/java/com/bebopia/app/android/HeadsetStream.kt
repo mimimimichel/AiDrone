@@ -401,6 +401,7 @@ function draw(){
   if(s.paused)warns.push([WARN,'IA EN PAUSE']);
   if(s.confirm===false)warns.push([WARN,'MODE CONFIANCE']);
   if(s.manual)warns.push([CYAN,'MANUEL']);
+  if(s.indoor)warns.push([CYAN,'INTÉRIEUR']);
   if(s.rec||tel.rec)warns.unshift([RED,'● REC']);
   if(s.activity)warns.unshift([WARN,String(s.activity).toUpperCase().slice(0,28)]);
   let wx=W-28;
@@ -511,7 +512,7 @@ function drawLeft(s,tel){
   t(tel.lowBattery?'Seuil d\'alerte atteint':'',x+18,VY+178,20,RED);
   // Navigation
   const ny=VY+202;panel(x,ny,w,270,'NAVIGATION');
-  drawMap(g,x+90,ny+140,72,tel,s.nav,s.moveArrow);
+  drawMap(g,x+90,ny+140,72,tel,s.nav,s.moveArrow,s.scene);
   const hd=num(tel.homeDist,num(s.dist,0));
   t('Départ',x+172,ny+90,20,GREY);
   t(f1(hd)+' m',x+172,ny+130,34,CYAN,'left',true);
@@ -567,7 +568,7 @@ function tile(z,x,y){const k=z+'/'+x+'/'+y;let im=tiles.get(k);
 function proj(lat,lon,z){const n=Math.pow(2,z)*256,r=lat*Math.PI/180;
   return [(lon+180)/360*n,(1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*n];}
 // Carte ronde centrée sur le drone, orientée dans sa direction (le haut = devant le drone).
-function drawMap(c,cx,cy,R,tel,nav,mv){
+function drawMap(c,cx,cy,R,tel,nav,mv,scene){
   nav=nav||{};
   c.save();c.beginPath();c.arc(cx,cy,R,0,Math.PI*2);c.closePath();
   c.fillStyle='rgba(10,20,15,.85)';c.fill();c.clip();
@@ -579,6 +580,7 @@ function drawMap(c,cx,cy,R,tel,nav,mv){
   far=Math.max(far,near([0,0]));
   for(const w of (nav.wps||[]))far=Math.max(far,Math.min(near(w),gps?400:30));
   for(const q of (nav.pins||[]))far=Math.max(far,Math.min(near(q),gps?400:30));
+  if(scene&&scene.items)for(const q of scene.items)far=Math.max(far,Math.min(near(q),gps?100:12));
   if(gps)for(const [a,b] of [[tel.homeLat,tel.homeLon],[tel.pilotLat,tel.pilotLon]]){
     if(typeof a==='number'&&typeof b==='number'){const dy=(a-lat)*111320,dx=(b-lon)*111320*Math.cos(lat*Math.PI/180);far=Math.max(far,Math.hypot(dx,dy));}}
   let z=19,sc;const mpp=zz=>156543.03*Math.cos((gps?lat:45)*Math.PI/180)/Math.pow(2,zz);
@@ -601,6 +603,15 @@ function drawMap(c,cx,cy,R,tel,nav,mv){
       c.beginPath();c.moveTo(gx,-R*1.5);c.lineTo(gx,R*1.5);c.stroke();c.beginPath();c.moveTo(-R*1.5,gy);c.lineTo(R*1.5,gy);c.stroke();}
   }
   const P=(n,e)=>[(e-pos[1])*sc,-(n-pos[0])*sc];
+  // Repérage : place libre (zone verte) et ce qui a été vu (portes, cible, murs et meubles)
+  if(scene){const fr=scene.free||[], o0=scene.o||[0,0];
+    if(fr.length>2){const pts=fr.slice().sort((a,b)=>a[0]-b[0]).map(q=>P(o0[0]+q[1]*Math.cos(q[0]*Math.PI/180),o0[1]+q[1]*Math.sin(q[0]*Math.PI/180)));
+      c.fillStyle='rgba(124,255,178,.14)';c.strokeStyle='rgba(124,255,178,.6)';c.lineWidth=1.5;c.beginPath();pts.forEach((p,i)=>i?c.lineTo(p[0],p[1]):c.moveTo(p[0],p[1]));c.closePath();c.fill();c.stroke();}
+    for(const q of (scene.items||[])){const [x,y]=P(q[0],q[1]);
+      if(q[3]==='porte'||q[3]==='passage'){c.save();c.translate(x,y);c.rotate(hd);c.fillStyle=q[4]?'rgba(232,166,255,.5)':'#E9A6FF';c.strokeStyle='#000';c.lineWidth=2;c.fillRect(-6,-9,12,18);c.strokeRect(-6,-9,12,18);c.restore();}
+      else if(q[3]==='cible'){c.save();c.translate(x,y);c.rotate(hd);c.fillStyle=RED;c.strokeStyle='#000';c.lineWidth=2;c.beginPath();
+        for(let k=0;k<10;k++){const rr2=k%2?5:12,a=k*Math.PI/5-Math.PI/2;c.lineTo(Math.cos(a)*rr2,Math.sin(a)*rr2);}c.closePath();c.fill();c.stroke();c.restore();}
+      else{c.fillStyle='rgba(189,244,255,.55)';c.beginPath();c.arc(x,y,3,0,Math.PI*2);c.fill();}}}
   // Zones déjà fouillées
   for(const q of (nav.cov||[])){const [x,y]=P(q[0],q[1]);c.fillStyle='rgba(189,244,255,.16)';c.beginPath();c.arc(x,y,Math.max(3,q[2]*sc),0,Math.PI*2);c.fill();}
   // Trace du vol
@@ -717,7 +728,7 @@ function drawOSD(){
   if(typeof tel.homeBearing==='number'){const rel=norm(tel.homeBearing-hd);const x=cx+Math.max(-45,Math.min(45,rel))*ppx;tx('H',x,ty-48,20,ACC,'center',700,0);}
   tx('NAV',cx,ty+92,16,'rgba(189,244,255,.6)','center',600,4);
   // Haut gauche : appareil, IA ; haut droite : heure, mode
-  tx(({BEBOP:'BEBOP 2',MAVIC:'MAVIC MINI',SIM:'SIMULATION'}[s.mode]||'—'),110,118,22,ICE,'left',600,4);
+  tx(({BEBOP:'BEBOP 2',MAVIC:'MAVIC MINI',SIM:'SIMULATION'}[s.mode]||'—')+(s.indoor?'  ·  INTÉRIEUR':''),110,118,22,ICE,'left',600,4);
   const ia=s.manual?['MANUEL',ACC]:s.paused?['IA · PAUSE',AMB]:[(s.confirm===false?'IA · AUTONOME':'IA · VALIDATION'),ACC];
   tx(ia[0],110,150,20,ia[1],'left',600,3);
   if(s.activity)tx('▸ '+String(s.activity).toUpperCase().slice(0,34),110,180,18,AMB,'left',600,2);
@@ -770,7 +781,7 @@ function drawOSD(){
     o.fillStyle='rgba(4,16,24,.35)';o.fill();if(title)tx(title,x+18,py-10,16,'rgba(189,244,255,.8)','left',700,4);}
   // gauche : carte, départ, temps de vol
   panelF(90,500,'NAV · CARTE');
-  drawMap(o,200,py+100,88,tel,s.nav,s.moveArrow);
+  drawMap(o,200,py+100,88,tel,s.nav,s.moveArrow,s.scene);
   tx('HOME',320,py+46,15,'rgba(189,244,255,.7)','left',700,4);tx(f1(num(tel.homeDist,num(s.dist,0)))+' M',320,py+80,30,ICE,'left',600,2);
   tx('DUR',320,py+124,15,'rgba(189,244,255,.7)','left',700,4);tx(mmss(tel.flightTime),320,py+156,26,ICE,'left',500,3);
   tx((typeof tel.sats==='number'?tel.sats:'—')+' SAT',470,py+46,15,num(tel.sats,0)>=8?ACC:AMB,'left',700,3);

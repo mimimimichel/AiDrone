@@ -26,6 +26,8 @@ class DjiDrone(
         const val MISSION_SPEED = 3.0 // m/s pour les longs segments d'une mission en extérieur
         const val VSPEED = 0.4       // m/s à la verticale
         const val YAW_RATE = 40.0    // °/s
+        const val INDOOR_SPEED = 0.3 // m/s en intérieur
+        const val INDOOR_YAW = 30.0  // °/s en intérieur
     }
 
     override val name: String get() = link.model()
@@ -67,6 +69,12 @@ class DjiDrone(
 
     override fun headLook(pitch: Double, yaw: Double, follow: Boolean, recenter: Boolean) {
         val now = System.currentTimeMillis()
+        if (headPaused) {
+            // Manœuvre automatique : la tête ne commande plus rien ; au retour, on recentre sur le cap actuel.
+            headFollow = false
+            droneYawCenter = null
+            return
+        }
         headSeenAt = now
         // Nacelle du Mini : de 0° (devant) à -90° (vers le sol)
         val p = pitch.coerceIn(-90.0, 0.0).toFloat()
@@ -309,8 +317,9 @@ class DjiDrone(
         // Le drone suit la tête : une rotation demandée décale la correspondance tête -> drone d'autant.
         if (follow && yawDeg != 0.0) droneYawCenter = com.bebopia.app.core.norm180(droneYawCenter!! + yawDeg)
         val dist = hypot(forward, right)
-        val speed = if (dist > 3) MISSION_SPEED else SPEED
-        val t = max(max(dist / speed, abs(down) / VSPEED), max(abs(yawDeg) / YAW_RATE, 0.5))
+        // En intérieur : lent et doux
+        val speed = if (indoor) INDOOR_SPEED else if (dist > 3) MISSION_SPEED else SPEED
+        val t = max(max(dist / speed, abs(down) / VSPEED), max(abs(yawDeg) / (if (indoor) INDOOR_YAW else YAW_RATE), 0.5))
         val vf = (forward / t).toFloat()
         val vr = (right / t).toFloat()
         val vu = (-down / t).toFloat()

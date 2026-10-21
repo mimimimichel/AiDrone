@@ -7,6 +7,16 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
 
+/**
+ * Place libre autour du drone, d'après le dernier repérage (murs, meubles, plafond).
+ * allowed : distance (m) qu'on peut parcourir dans une direction absolue depuis [pos] (marge comprise), null = inconnu.
+ */
+interface SpaceGuard {
+    fun allowed(bearingDeg: Double, pos: Pair<Double, Double>): Double?
+    /** Altitude du plafond (m), si on l'a estimée. */
+    fun ceilingAlt(): Double?
+}
+
 /** Réglages de sécurité. Ajuste-les avant de voler. */
 data class Limits(
     @Volatile var maxAltitudeM: Double = 3.0, // plafond (envoyé au drone et vérifié ici, réglable : 2 à 120 m, la limite légale)
@@ -39,6 +49,22 @@ abstract class DroneBase(val limits: Limits) {
         protected set
 
     open var flying: Boolean = false
+
+    /** En intérieur : pas courts, lents, jamais plus haut que le plafond estimé (réglé par l'application). */
+    @Volatile var indoor = false
+
+    /** Manœuvre automatique en cours (repérage, porte) : la tête du pilote ne commande plus la caméra ni le cap. */
+    @Volatile var headPaused = false
+
+    /** Place libre autour du drone (repérage) : les déplacements qui iraient dans un mur sont raccourcis ou refusés. */
+    @Volatile var space: SpaceGuard? = null
+
+    companion object {
+        const val INDOOR_STEP = 0.3        // pas max des actions de l'IA en intérieur (m)
+        const val INDOOR_LONG_STEP = 1.0   // pas max des manœuvres guidées (passage de porte…) en intérieur
+        const val INDOOR_MAX_ALT = 2.0     // altitude max en intérieur tant que le plafond n'est pas estimé
+        const val CEILING_MARGIN = 0.5     // marge sous le plafond (m)
+    }
 
     /** Vrai pendant un déplacement vers l'avant (le détecteur d'obstacles surveille alors la vidéo). */
     @Volatile var movingForward = false
@@ -256,10 +282,32 @@ abstract class DroneBase(val limits: Limits) {
         if (!flying) return "refusé : le drone est au sol (décolle d'abord)"
         syncHeading()
         val l = limits
-        val f = forward.coerceIn(-maxStep, maxStep)
-        val r = right.coerceIn(-maxStep, maxStep)
-        val u = up.coerceIn(-maxStep, maxStep)
+        // En intérieur : pas courts (les manœuvres guidées ont droit à un peu plus)
+        val step = if (indoor) minOf(maxStep, if (maxStep <= l.maxStepM) INDOOR_STEP else INDOOR_LONG_STEP) else maxStep
+        var f = forward.coerceIn(-step, step)
+        var r = right.coerceIn(-step, step)
+        var u = up.coerceIn(-step, step)
         val yw = yaw.coerceIn(-l.maxYawDeg, l.maxYawDeg)
+        var note = ""
+        // Place libre d'après le repérage : on ne va pas dans un mur
+        val horiz = hypot(f, r)
+        if (horiz > 0.05) {
+            val bearing = bodyCompass() + Math.toDegrees(kotlin.math.atan2(r, f))
+            space?.allowed(bearing, positionNE())?.let { free ->
+                if (free < 0.1) return "refusé : pas de place dans cette direction (mur ou obstacle à moins de %.1f m d'après le repérage). Tourne-toi ou repère les lieux".format(free.coerceAtLeast(0.0) + 0.5)
+                if (horiz > free) {
+                    f *= free / horiz; r *= free / horiz
+                    note = " (raccourci à %.1f m : mur ou obstacle d'après le repérage)".format(free)
+                }
+            }
+        }
+        // Plafond : en intérieur, jamais à moins de 50 cm du plafond estimé (2 m max s'il est inconnu)
+        if (u > 0) {
+            val top = if (indoor) (space?.ceilingAlt()?.minus(CEILING_MARGIN) ?: INDOOR_MAX_ALT) else Double.MAX_VALUE
+            val room = top - altitude()
+            if (room < 0.05) return "refusé : trop près du plafond (altitude %.1f m, plafond estimé à %.1f m)".format(altitude(), top + CEILING_MARGIN)
+            if (u > room) { u = room; note += " (montée limitée par le plafond)" }
+        }
 
         if (f > 0.05 && System.currentTimeMillis() < obstacleUntil) {
             return "refusé : obstacle détecté devant il y a quelques secondes. Recule, tourne ou monte avant d'avancer"
@@ -278,7 +326,7 @@ abstract class DroneBase(val limits: Limits) {
         if (done < 1.0) {
             return "%s (fait environ %.0f %% du déplacement)".format(cancelReason ?: "interrompu", done * 100)
         }
-        return "déplacé (avant %+.1f m, droite %+.1f m, haut %+.1f m, rotation %+.0f°)".format(f, r, du, yw)
+        return "déplacé (avant %+.1f m, droite %+.1f m, haut %+.1f m, rotation %+.0f°)".format(f, r, du, yw) + note
     }
 
     /** Revient au-dessus du point de décollage (estimation, pas GPS). */

@@ -36,11 +36,13 @@ class Agent(
     companion object {
         /** Actions soumises à ton accord en mode validation (atterrir n'en a jamais besoin). */
         val NEEDS_CONFIRM = setOf("takeoff", "move", "return_home", "tilt_camera", "search", "search_area",
-            "go_look", "follow", "goto_point", "tour", "film", "retrace")
+            "go_look", "follow", "goto_point", "tour", "film", "retrace", "survey", "pass_door", "search_house", "come_back")
         /** Actions refusées s'il n'y a pas d'image. */
-        val NEEDS_IMAGE = setOf("takeoff", "move", "return_home", "search", "search_area", "go_look", "follow", "film", "goto_point", "tour")
+        val NEEDS_IMAGE = setOf("takeoff", "move", "return_home", "search", "search_area", "go_look", "follow", "film", "goto_point", "tour",
+            "survey", "pass_door", "search_house", "come_back")
         /** Actions longues (affichées dans le casque pendant qu'elles durent). */
-        val LONG = setOf("search", "search_area", "go_look", "follow", "goto_point", "tour", "film", "retrace", "return_home")
+        val LONG = setOf("search", "search_area", "go_look", "follow", "goto_point", "tour", "film", "retrace", "return_home",
+            "survey", "pass_door", "search_house", "come_back")
 
         val STOP_WORDS = setOf("stop", "stoppe", "arrete", "arretes", "arretez", "pause", "halte", "stopper")
         val LAND_PHRASES = listOf("atterri", "pose toi", "pose-toi", "pose le drone")
@@ -82,6 +84,10 @@ class Agent(
             "tour" -> "faire le tour des points marqués"
             "film" -> "plan de cinéma « ${action["shot"] ?: "?"} »"
             "retrace" -> "rentrer par le même chemin" + if (action["land"] == true) " et atterrir" else ""
+            "survey" -> "repérer les lieux (tour complet)" + (action["target"]?.let { " en cherchant « $it »" } ?: "")
+            "pass_door" -> "passer « ${action["door"] ?: "la porte"} »"
+            "search_house" -> "chercher « ${action["target"] ?: "?"} » dans la maison, pièce par pièce"
+            "come_back" -> "revenir à la pièce de départ"
             else -> t ?: "?"
         }
     }
@@ -147,6 +153,12 @@ class Agent(
 
     /** Plans de cinéma. */
     var shots: Shots? = null
+
+    /** Repérage, mémoire de la scène, portes, recherche dans la maison. */
+    var surveyor: Surveyor? = null
+    var scene: SceneMemory? = null
+    var doorPasser: DoorPasser? = null
+    var house: HouseSearch? = null
 
     /** Chaque ligne terminée de la conversation (pour le journal de vol). */
     var onLine: ((Role, String) -> Unit)? = null
@@ -769,6 +781,19 @@ class Agent(
                 "goto_point" -> nav?.goToPoint(action["point"]?.toString() ?: "") ?: "refusé : navigation indisponible"
                 "tour" -> nav?.tour() ?: "refusé : navigation indisponible"
                 "retrace" -> nav?.retrace(action["land"] == true) ?: "refusé : navigation indisponible"
+                "survey" -> surveyor?.survey(action["target"]?.toString()?.takeIf { it.isNotBlank() },
+                    num(action, "climb_m").takeIf { it > 0 })?.text ?: "refusé : le repérage a besoin d'une clé Gemini"
+                "pass_door" -> {
+                    val want = action["door"]?.toString().orEmpty()
+                    val here = drone.positionNE()
+                    val known = scene?.doors()?.let { ds ->
+                        ds.firstOrNull { want.isNotBlank() && (it.label.contains(want, true) || want.contains(it.label, true)) }
+                            ?: ds.minByOrNull { kotlin.math.hypot(it.n - here.first, it.e - here.second) }.takeIf { want.isBlank() }
+                    }
+                    doorPasser?.pass(want.ifBlank { known?.label ?: "porte" }, known) ?: "refusé : le passage de porte a besoin d'une clé Gemini"
+                }
+                "search_house" -> house?.run(action["target"]?.toString() ?: "") ?: "refusé : la recherche dans la maison a besoin d'une clé Gemini"
+                "come_back" -> house?.comeBack() ?: "refusé : indisponible"
                 "follow" -> {
                     onSnap?.invoke("suivi " + (action["target"] ?: ""))
                     follower?.follow(action["target"]?.toString() ?: "", num(action, "minutes").takeIf { it > 0 }, action["classe"]?.toString())

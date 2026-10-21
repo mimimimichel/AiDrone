@@ -115,7 +115,7 @@ class BebopDrone(
     /** Caméra du Bebop : inclinaison et pivot numériques, qui suivent la tête. */
     override fun headLook(pitch: Double, yaw: Double, follow: Boolean, recenter: Boolean) {
         val now = System.currentTimeMillis()
-        if (now - headSentAt < 100) return
+        if (headPaused || now - headSentAt < 100) return
         headSentAt = now
         net.send(BebopCmd.cameraOrientation(pitch.coerceIn(-80.0, 15.0).toFloat(), yaw.coerceIn(-35.0, 35.0).toFloat()))
     }

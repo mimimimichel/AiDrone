@@ -87,6 +87,82 @@ class GeminiVision(
         throw IOException("vérification de trajectoire impossible (${last?.message})")
     }
 
+    private val VIEW_SCHEMA = JSONObject("""
+        {"type":"object","properties":{
+          "indoor":{"type":"boolean","description":"true si c'est l'intérieur d'un bâtiment"},
+          "free_ahead_m":{"type":"number","description":"distance libre droit devant, au centre de l'image et à hauteur de la caméra, jusqu'au premier obstacle (mur, meuble, porte fermée, personne…). Sous-estime en cas de doute. 30 si rien avant 30 m"},
+          "ceiling_above_m":{"type":"number","description":"distance verticale entre la caméra et le plafond si on le voit, sinon -1"},
+          "items":{"type":"array","items":{"type":"object","properties":{
+            "label":{"type":"string","description":"nom court en français (ex. porte du couloir, canapé gris, mur)"},
+            "kind":{"type":"string","enum":["porte","passage","escalier","fenetre","mur","meuble","obstacle","personne","animal","autre"]},
+            "x":{"type":"integer","description":"position horizontale du centre dans l'image, de 0 (bord gauche) à 1000 (bord droit)"},
+            "distance_m":{"type":"number"},
+            "width_m":{"type":"number","description":"largeur réelle estimée (pour une porte ou un passage : la largeur libre de l'ouverture)"},
+            "open":{"type":"boolean","description":"porte ou passage : true si on peut passer (ouvert)"}
+          },"required":["label","kind","x","distance_m"]}},
+          "target_visible":{"type":"boolean"},
+          "target_x":{"type":"integer"},
+          "target_distance_m":{"type":"number"},
+          "target_description":{"type":"string"},
+          "summary":{"type":"string","description":"une phrase : ce que montre cette vue"}
+        },"required":["indoor","free_ahead_m","items","target_visible","summary"]}
+        """.trimIndent())
+
+    private val DOWN_SCHEMA = JSONObject("""
+        {"type":"object","properties":{
+          "below_m":{"type":"number","description":"hauteur libre entre le drone et ce qu'il y a juste dessous (sol, table, lit…)"},
+          "clear":{"type":"boolean","description":"true si le drone peut descendre sans rien toucher"},
+          "summary":{"type":"string","description":"une phrase : ce qu'il y a sous le drone"}
+        },"required":["below_m","clear","summary"]}
+        """.trimIndent())
+
+    /** Repérage : ce que montre une vue (portes, murs, meubles, place libre, plafond, cible) ou ce qu'il y a dessous. */
+    fun analyzeView(jpegBase64: String, target: String?, down: Boolean, hfovDeg: Double): com.bebopia.app.core.ai.ViewReport {
+        val key = apiKey()
+        if (key.isBlank()) throw IllegalStateException("clé Gemini manquante")
+        val prompt = if (down) "Image de la caméra d'un drone, tournée vers le bas. Estime la hauteur libre sous le drone " +
+            "(jusqu'au sol ou à l'objet juste dessous), en t'aidant de la taille des objets connus (carrelage, meubles, herbe, voitures). " +
+            "En cas de doute, sous-estime-la. Dis s'il peut descendre sans rien toucher."
+        else "Image de la caméra frontale d'un drone (30 cm de large avec sa cage), caméra à l'horizontale, champ de vision horizontal " +
+            "d'environ ${hfovDeg.toInt()}°. Il doit se déplacer sans rien toucher. Décris la scène : la distance libre droit devant ; " +
+            "le plafond s'il est visible ; les portes et passages (ouverts ou fermés, largeur de l'ouverture), escaliers, murs proches, " +
+            "meubles et obstacles, personnes et animaux, avec leur position dans l'image et leur distance (aide-toi de la taille des objets " +
+            "connus : une porte fait environ 2 m de haut et 0,8 m de large). En cas de doute sur une distance, sous-estime-la. N'invente rien." +
+            (target?.let { "\nObjet cherché : « $it ». S'il est visible, target_visible = true, avec sa position et sa distance." } ?: "")
+        var last: Exception? = null
+        for (attempt in MODELS.indices) {
+            val model = MODELS[(modelIndex + attempt) % MODELS.size]
+            try {
+                val j = generate(model, key, jpegBase64, prompt, if (down) DOWN_SCHEMA else VIEW_SCHEMA)
+                if (down) return com.bebopia.app.core.ai.ViewReport(null, null, null, emptyList(), null,
+                    j.optDouble("below_m", Double.NaN).takeIf { !it.isNaN() && it >= 0 }, j.optBoolean("clear"), j.optString("summary"))
+                val items = ArrayList<com.bebopia.app.core.ai.ViewItem>()
+                val arr = j.optJSONArray("items")
+                if (arr != null) for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    items.add(com.bebopia.app.core.ai.ViewItem(
+                        o.optString("label"), o.optString("kind", "autre"), (o.optDouble("x", 500.0) / 1000).coerceIn(0.0, 1.0),
+                        o.optDouble("distance_m", Double.NaN).takeIf { !it.isNaN() && it > 0 },
+                        o.optDouble("width_m", Double.NaN).takeIf { !it.isNaN() && it > 0 },
+                        if (o.has("open")) o.optBoolean("open") else null,
+                    ))
+                }
+                val tgt = if (j.optBoolean("target_visible")) com.bebopia.app.core.ai.ViewItem(
+                    j.optString("target_description", target ?: ""), "cible", (j.optDouble("target_x", 500.0) / 1000).coerceIn(0.0, 1.0),
+                    j.optDouble("target_distance_m", Double.NaN).takeIf { !it.isNaN() && it > 0 }, null, null) else null
+                return com.bebopia.app.core.ai.ViewReport(
+                    if (j.has("indoor")) j.optBoolean("indoor") else null,
+                    j.optDouble("free_ahead_m", Double.NaN).takeIf { !it.isNaN() && it >= 0 },
+                    j.optDouble("ceiling_above_m", -1.0).takeIf { it > 0 },
+                    items, tgt, null, null, j.optString("summary"),
+                )
+            } catch (e: ModelUnavailable) {
+                last = e
+            }
+        }
+        throw IOException("analyse de la vue impossible (${last?.message})")
+    }
+
     /** Texte seul (résumé de vol). Essaie les modèles Flash l'un après l'autre. */
     fun text(prompt: String): String {
         val key = apiKey()

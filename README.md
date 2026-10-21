@@ -120,6 +120,14 @@ Par défaut (✋ **mode prudent**), l'IA te demande ton accord avant chaque dép
 - **Journal de vol** (⚙ → Journal des vols) : chaque vol, du décollage à l'atterrissage, avec la conversation, la trace, des photos (points marqués, cibles trouvées, une toutes les 2 minutes) et un résumé écrit par l'IA.
 - **Mémoire de l'IA** : elle retient ce qui sera utile plus tard (« la tulipe est sur le rebord de la fenêtre »), ou ce que tu lui dis de retenir, ainsi que le résumé de chaque vol. Elle s'en sert dans les conversations suivantes. Elle s'efface dans ⚙.
 
+## Regarder avant d'agir, et l'intérieur
+
+- **Repérage** (« regarde autour de toi », ou de lui-même avant un plan) : le drone fait un tour complet sur place (8 vues en intérieur, 6 dehors) puis regarde sous lui. Chaque vue est analysée : portes et passages (ouverts ou fermés, largeur), murs, meubles, obstacles, personnes, place libre dans chaque direction, plafond, hauteur libre dessous, et l'objet cherché. Tout est rangé dans une **mémoire de la scène** que l'IA utilise pour planifier, et qui s'affiche sur la carte du casque (zone verte = place libre, rectangles violets = portes, étoile rouge = cible). S'il lui manque une information (ce qu'il y a dessous, derrière une porte), l'IA va la chercher avant d'agir. Dehors, elle peut monter de quelques mètres pour voir plus loin.
+- **Mode intérieur** (automatique sans GPS ou quand le repérage voit une pièce, ou imposé dans ⚙) : pas de 30 cm maximum, 0,3 m/s, rotations douces, jamais à moins de 50 cm du plafond estimé (2 m maximum s'il est inconnu), jamais de montée pour regarder par-dessus. Les déplacements qui iraient dans un mur ou un meuble d'après le repérage sont raccourcis ou refusés.
+- **Passer une porte** (« passe la porte du couloir ») : le drone se tourne vers elle, se met à mi-hauteur (1,1 m), vérifie qu'elle est assez large (60 cm minimum), s'en approche par petits pas en se recentrant sur elle à chaque pas, puis la franchit tout droit, lentement. Un cadre bleu entoure la porte pendant la manœuvre.
+- **Chercher dans la maison** (« trouve mes clés dans la maison ») : repérage de la pièce ; si l'objet n'y est pas, passage de la porte ouverte la plus proche pas encore franchie, et ainsi de suite (6 pièces au plus). Une fois trouvé, il s'en approche. « Reviens » le ramène à la pièce de départ en repassant les portes dans l'ordre inverse.
+- Limites : les distances viennent de l'IA qui regarde les images (à 20–30 % près), la position estimée dérive en intérieur, et les vitres ou portes vitrées sont mal vues. Garde un œil sur le drone et la main sur « stop ».
+
 ## Garde-fous
 
 - L'IA ne commande jamais les moteurs : elle propose une action, le code la vérifie puis l'exécute.

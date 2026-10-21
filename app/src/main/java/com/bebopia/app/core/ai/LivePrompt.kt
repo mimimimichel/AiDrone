@@ -72,6 +72,20 @@ Autres capacités (chacune a son outil ; elles sont longues : préviens le pilot
   une préférence du pilote) ou quand il te dit « retiens que… », appelle remember. Tes souvenirs te sont donnés au début de la conversation.
   Chaque vol est aussi enregistré dans un journal (photos et résumé) consultable dans l'application.
 
+Regarder avant d'agir (important) : avant un plan qui sort de ce que tu vois, ou un déplacement vertical, ou si tu ne sais
+pas ce qu'il y a autour (derrière, sur les côtés, dessous), appelle survey : le drone fait un tour complet, regarde sous lui et
+range ce qu'il voit (portes, murs, meubles, place libre, plafond, cible) dans une mémoire que drone_status te redonne.
+Appuie tes plans sur cette mémoire. S'il te manque une information pour décider (ce qu'il y a sous toi avant de descendre,
+où mène une porte, ce qu'il y a derrière un meuble), va la chercher d'abord (survey, rotation, caméra vers le bas) et dis-le.
+Dehors, tu peux monter de quelques mètres pour voir plus loin (survey avec climb_m).
+
+En intérieur (l'application te le dit ; elle limite alors elle-même les pas à 30 cm, la vitesse, et l'altitude sous le plafond) :
+- jamais monter pour regarder par-dessus : tu restes à hauteur de pièce ;
+- petits pas, et regarde après chaque pas ; l'application refuse ou raccourcit les déplacements qui iraient dans un mur d'après le repérage ;
+- pour aller dans une autre pièce : pass_door (elle s'aligne, vérifie la largeur et passe doucement) ;
+- pour trouver quelque chose dans la maison (« trouve mes clés dans la maison ») : search_house, qui visite les pièces une par une
+  en passant les portes ; come_back pour revenir à la pièce de départ.
+
 Résultats possibles de drone_action :
 - « en attente » : le pilote doit valider. Dis-lui en une phrase ce que tu proposes et attends.
   C'est l'application qui recueille son oui ou son non : n'appelle pas l'outil une deuxième fois pour la même action.
@@ -255,6 +269,33 @@ Les messages entre crochets [Message de l'application…] viennent de l'applicat
             "parameters" to mapOf("type" to "OBJECT", "properties" to mapOf(
                 "note" to mapOf("type" to "STRING", "description" to "Ce qu'il faut retenir, en une phrase autonome (ex. « La tulipe rouge est sur le rebord de la fenêtre du salon. »)."),
             ), "required" to listOf("note")),
+        ),
+        mapOf(
+            "name" to "survey",
+            "description" to "Repérage : tour complet sur place (8 vues en intérieur), puis une vue vers le bas. Range portes, murs, meubles, " +
+                "place libre, plafond et cible dans la mémoire de la scène, et la renvoie. À faire avant de planifier hors de la vue actuelle.",
+            "parameters" to mapOf("type" to "OBJECT", "properties" to mapOf(
+                "target" to mapOf("type" to "STRING", "description" to "Ce que tu cherches en même temps (vide sinon)."),
+                "climb_m" to num("Dehors seulement : monter d'abord de ce nombre de mètres pour voir plus loin."),
+            )),
+        ),
+        mapOf(
+            "name" to "pass_door",
+            "description" to "Passe une porte ou un passage ouvert : se tourne vers lui, se met à mi-hauteur, vérifie la largeur, s'approche en se recentrant, puis le franchit lentement.",
+            "parameters" to mapOf("type" to "OBJECT", "properties" to mapOf(
+                "door" to mapOf("type" to "STRING", "description" to "La porte (nom vu au repérage, ex. « porte du couloir »), vide = la plus proche."),
+            )),
+        ),
+        mapOf(
+            "name" to "search_house",
+            "description" to "Cherche un objet dans la maison, pièce par pièce : repérage de chaque pièce, passage des portes, approche de l'objet trouvé. Long.",
+            "parameters" to mapOf("type" to "OBJECT", "properties" to mapOf(
+                "target" to mapOf("type" to "STRING", "description" to "L'objet cherché, précis."),
+            ), "required" to listOf("target")),
+        ),
+        mapOf(
+            "name" to "come_back",
+            "description" to "Après search_house : revient à la pièce de départ en repassant les portes dans l'ordre inverse.",
         ),
         mapOf(
             "name" to "drone_status",

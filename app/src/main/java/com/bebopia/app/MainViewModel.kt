@@ -104,6 +104,9 @@ data class UiState(
     val autoRecord: Boolean = false,
     /** Cadres à dessiner sur la vidéo (cible suivie, proposée, candidats, trouvée). */
     val marks: List<com.bebopia.app.core.vision.Marks.Mark> = emptyList(),
+    val indoor: Boolean = false,
+    /** auto, interieur ou exterieur */
+    val envMode: String = "auto",
 )
 
 /** Un point du diagnostic du Mavic : état (ok / attention / bloquant), titre, explication. */
@@ -160,6 +163,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var speak: Boolean
         get() = prefs.getBoolean("speak", true)
         private set(v) = prefs.edit().putBoolean("speak", v).apply()
+    /** Intérieur / extérieur : « auto » (d'après le GPS et le repérage), ou imposé par le pilote. */
+    var envMode: String
+        get() = prefs.getString("env_mode", "auto") ?: "auto"
+        private set(v) = prefs.edit().putString("env_mode", v).apply()
+    @Volatile private var sceneIndoor: Boolean? = null
+    @Volatile private var sceneIndoorAt = 0L
+
+    fun changeEnvMode(m: String) {
+        envMode = m
+        sysMessage(when (m) {
+            "interieur" -> "🏠 Mode intérieur imposé : pas de 30 cm, lent, jamais au-dessus du plafond."
+            "exterieur" -> "🌳 Mode extérieur imposé."
+            else -> "🏠/🌳 Intérieur ou extérieur : détecté automatiquement (GPS et repérage)."
+        })
+        refresh()
+    }
+
     /** Filmer chaque vol en entier sur la carte du drone. */
     var autoRecord: Boolean
         get() = prefs.getBoolean("auto_record", false)
@@ -321,6 +341,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             recording = d?.recording ?: false,
             autoRecord = autoRecord,
             marks = com.bebopia.app.core.vision.Marks.current(),
+            indoor = d?.indoor ?: false,
+            envMode = envMode,
         )
     }
 
@@ -377,6 +399,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 a.addChat(Role.SYSTEM, "📔 Vol enregistré dans le journal ($title) : $summary")
             },
         )
+        // Repérage, mémoire de la scène, portes, recherche dans la maison
+        val sc = com.bebopia.app.core.ai.SceneMemory { d.indoor }
+        d.space = sc
+        val sv = com.bebopia.app.core.ai.Surveyor(d, eyes,
+            com.bebopia.app.core.ai.SceneAnalyzer { j, t, down, hf -> vision.analyzeView(j, t, down, hf) }, sc, hfov, simulation,
+            shouldStop = { a.paused }, report = { a.addChat(Role.SYSTEM, it) },
+            onIndoor = { sceneIndoor = it; sceneIndoorAt = System.currentTimeMillis() })
+        val dp = com.bebopia.app.core.ai.DoorPasser(d, eyes, vision, sc, hfov, simulation, shouldStop = { a.paused }, report = { a.addChat(Role.SYSTEM, it) })
+        a.scene = sc
+        a.surveyor = sv
+        a.doorPasser = dp
+        a.house = com.bebopia.app.core.ai.HouseSearch(d, sv, dp, { a.finder }, sc, shouldStop = { a.paused },
+            report = { a.addChat(Role.SYSTEM, it) }, onPlan = { a.missionPlan(it) })
+        scene = sc
         a.onLine = { role, text -> log.line(role, text) }
         a.onSnap = { label -> thread(isDaemon = true) { log.snap(label) } }
         flightLog = log
@@ -384,6 +420,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- carte, journal, mémoire -------------------------------------------------------------
     @Volatile private var nav: Navigator? = null
+    @Volatile private var scene: com.bebopia.app.core.ai.SceneMemory? = null
+    @Volatile private var wasFlyingTick = false
     @Volatile private var localDetector: com.bebopia.app.android.LocalDetector? = null
     @Volatile private var flightLog: FlightLog? = null
     @Volatile private var weakSignalSince = 0L
@@ -396,6 +434,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 delay(1000)
                 val d = drone ?: continue
                 runCatching { nav?.tick() }
+                // Nouveau vol : la mémoire de la scène repart de zéro
+                if (d.flying && !wasFlyingTick) scene?.clear()
+                wasFlyingTick = d.flying
+                // Intérieur ou extérieur
+                val indoorNow = when (envMode) {
+                    "interieur" -> true
+                    "exterieur" -> false
+                    else -> sceneIndoor?.takeIf { System.currentTimeMillis() - sceneIndoorAt < 15 * 60_000 } ?: !d.hasGps
+                }
+                if (indoorNow != d.indoor) {
+                    d.indoor = indoorNow
+                    sysMessage(if (indoorNow) "🏠 Intérieur : pas de 30 cm, lent, jamais au-dessus du plafond, place libre vérifiée."
+                        else "🌳 Extérieur : déplacements normaux.")
+                    live?.takeIf { it.active }?.event(
+                        if (indoorNow) "Tu es en INTÉRIEUR : petits pas (30 cm max, l'application limite), jamais monter pour regarder, " +
+                            "repère les lieux (survey) avant de planifier, passe les portes avec pass_door."
+                        else "Tu es en EXTÉRIEUR.", false)
+                }
                 runCatching { flightLog?.tick() }
                 // Filmer tout le vol
                 if (d.flying && autoRecord && !recordedFlight) {
@@ -726,6 +782,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         drone = null
         video = null
         nav = null
+        scene = null
         flightLog = null
         localDetector?.let { ld -> thread(isDaemon = true) { ld.close() } }
         localDetector = null
@@ -812,6 +869,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         live?.sendFrameNow()
                         mapOf("result" to r, "etat" to d.state())
                     }
+                    "survey", "pass_door", "search_house", "come_back" -> {
+                        val action = when (name) {
+                            "survey" -> mapOf("type" to "survey", "target" to args["target"], "climb_m" to args["climb_m"])
+                            "pass_door" -> mapOf("type" to "pass_door", "door" to args["door"])
+                            "search_house" -> mapOf("type" to "search_house", "target" to args["target"])
+                            else -> mapOf("type" to "come_back")
+                        }
+                        val r = a.aiAction(action)
+                        live?.sendFrameNow()
+                        mapOf("result" to r, "etat" to d.state())
+                    }
                     "go_to_look", "follow_target", "go_to_point", "tour_points", "film_shot", "retrace_path" -> {
                         val action = when (name) {
                             "go_to_look" -> mapOf("type" to "go_look", "vu" to args["vu"])
@@ -839,6 +907,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     "drone_status" -> d.state() + mapOf(
                         "points_marques" to (nav?.describeWaypoints() ?: "aucun"),
+                        "lieu" to if (d.indoor) "intérieur (pas de 30 cm max, pas de montée pour regarder)" else "extérieur",
+                        "memoire_scene" to (scene?.describe(d.positionNE(), d.lookHeading()) ?: "vide"),
                         "action_en_cours" to (a.activity ?: "aucune"),
                         "detecteur_telephone" to (localDetector?.averageMs?.takeIf { it > 0 }?.let { "%.0f ms par image".format(it) } ?: "pas encore utilisé"),
                         "ia" to if (a.paused) "en pause (ne peut pas bouger)" else "active",
@@ -1106,6 +1176,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .put("nav", runCatching { nav?.mapJson() }.getOrNull() ?: org.json.JSONObject.NULL)
             .put("activity", clean(s.activity))
             .put("rec", s.recording)
+            .put("indoor", s.indoor)
+            .put("scene", runCatching { scene?.mapJson() }.getOrNull() ?: org.json.JSONObject.NULL)
             .put("moveArrow", runCatching {
                 val a = agent
                 val mv = (a?.pending ?: a?.currentAction)?.takeIf { it["type"] == "move" }
