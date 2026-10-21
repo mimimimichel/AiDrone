@@ -134,7 +134,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private set(v) = prefs.edit().putString("api_key", v.trim()).apply()
     /** Clé Gemini (gratuite sur aistudio.google.com) : conversation vocale en direct. */
     var geminiKey: String
-        get() = prefs.getString("gemini_key", "") ?: ""
+        // Clé collée dans les réglages, sinon celle intégrée à l'APK au moment de sa construction
+        get() = (prefs.getString("gemini_key", "") ?: "").ifBlank { BuildConfig.GEMINI_KEY }
         private set(v) = prefs.edit().putString("gemini_key", v.trim()).apply()
     var bargeIn: Boolean
         get() = prefs.getBoolean("barge_in", true)
@@ -406,10 +407,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val sc = com.bebopia.app.core.ai.SceneMemory { d.indoor }
         d.space = sc
         d.sticksFollowLook = sticksFollowLook
+        val rg = track?.takeIf { !simulation }?.let { com.bebopia.app.core.ai.Ranger(d, it, hfov, report = { m -> a.addChat(Role.SYSTEM, m) }) }
+        a.ranger = rg
         val sv = com.bebopia.app.core.ai.Surveyor(d, eyes,
             com.bebopia.app.core.ai.SceneAnalyzer { j, t, down, hf -> vision.analyzeView(j, t, down, hf) }, sc, hfov, simulation,
             shouldStop = { a.paused }, report = { a.addChat(Role.SYSTEM, it) },
-            onIndoor = { sceneIndoor = it; sceneIndoorAt = System.currentTimeMillis() })
+            onIndoor = { sceneIndoor = it; sceneIndoorAt = System.currentTimeMillis() }, frames = track, ranger = rg)
         val dp = com.bebopia.app.core.ai.DoorPasser(d, eyes, vision, sc, hfov, simulation, shouldStop = { a.paused }, report = { a.addChat(Role.SYSTEM, it) })
         a.scene = sc
         a.surveyor = sv

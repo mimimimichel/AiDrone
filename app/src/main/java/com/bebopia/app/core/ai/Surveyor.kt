@@ -2,6 +2,10 @@ package com.bebopia.app.core.ai
 
 import com.bebopia.app.core.DroneBase
 import com.bebopia.app.core.norm180
+import com.bebopia.app.core.vision.DepthReading
+import com.bebopia.app.core.vision.Gray
+import com.bebopia.app.core.vision.GrayFrames
+import com.bebopia.app.core.vision.Parallax
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
@@ -28,6 +32,9 @@ class Surveyor(
     private val report: (String) -> Unit,
     /** Ce que les vues disent du lieu (intérieur ou non). */
     private val onIndoor: (Boolean) -> Unit = {},
+    /** Vidéo en niveaux de gris pour mesurer les distances par parallaxe (null : seulement les estimations de l'IA). */
+    private val frames: GrayFrames? = null,
+    private val ranger: Ranger? = null,
 ) {
     private class Stop(msg: String) : Exception(msg)
     private val pool = Executors.newFixedThreadPool(3)
@@ -96,14 +103,36 @@ class Surveyor(
         drone.tiltCamera(if (drone.indoor) 0.0 else -15.0)
         val pos = drone.positionNE()
         val jobs = ArrayList<Triple<Double, Future<ViewReport>, Int>>()
+        val low = arrayOfNulls<Gray>(views)
         for (i in 0 until views) {
             checkStop()
             val jpeg = capture()
+            low[i] = frames?.grab()
             val heading = drone.lookHeading()
             jobs.add(Triple(heading, pool.submit<ViewReport> { analyzer.analyze(jpeg, target, false, hfovDeg) }, i))
             if (simulation) report("(Simulation) Tourne le téléphone de ${step.roundToInt()}° vers la droite")
             val r = drone.move(0.0, 0.0, 0.0, step, maxStep = drone.limits.missionStepM)
             if (r.startsWith("refusé") || r.startsWith("interrompu")) throw Stop("repérage arrêté : $r")
+        }
+        // Second tour, 25 cm plus haut (ou plus bas) : les distances se mesurent au décalage entre les deux images
+        val depths = arrayOfNulls<DepthReading>(views)
+        val base = if (frames != null && !simulation) ranger?.baseline() else null
+        if (base != null) {
+            checkStop()
+            report("📏 Deuxième tour, ${(kotlin.math.abs(base) * 100).roundToInt()} cm plus ${if (base > 0) "haut" else "bas"}, pour mesurer les distances")
+            val alt1 = drone.altitude()
+            drone.move(0.0, 0.0, base, 0.0, maxStep = drone.limits.missionStepM)
+            val dz = drone.altitude() - alt1
+            val b = if (kotlin.math.abs(dz - base) < 0.12 && kotlin.math.abs(dz) > 0.1) dz else base
+            for (i in 0 until views) {
+                checkStop()
+                Thread.sleep(700)
+                val g2 = frames!!.grab()
+                val g1 = low[i]
+                if (g1 != null && g2 != null) depths[i] = Parallax.depth(g1, g2, b, hfovDeg)
+                drone.move(0.0, 0.0, 0.0, step, maxStep = drone.limits.missionStepM)
+            }
+            drone.move(0.0, 0.0, -base, 0.0, maxStep = drone.limits.missionStepM)
         }
         var below: ViewReport? = null
         if (lookDown) {
@@ -126,7 +155,13 @@ class Surveyor(
             val v = runCatching { f.get(40, TimeUnit.SECONDS) }.getOrNull() ?: continue
             v.indoor?.let { indoorVotes.add(it) }
             v.ceilingAboveM?.let { ceilings.add(alt + it) }
-            v.freeAheadM?.let { sectors.add(heading to it) }
+            // Place libre : l'estimation de l'IA, réduite par la mesure si elle voit plus près
+            val dep = depths[i]
+            val measured = dep?.center
+            v.freeAheadM?.let { sectors.add(heading to (if (measured != null) minOf(it, measured) else it)) }
+            if (v.freeAheadM == null && measured != null && measured < Parallax.MAX_M) sectors.add(heading to measured)
+            dep?.left?.takeIf { it < Parallax.MAX_M }?.let { sectors.add(heading - hfovDeg / 3 to it) }
+            dep?.right?.takeIf { it < Parallax.MAX_M }?.let { sectors.add(heading + hfovDeg / 3 to it) }
             summaries.add("${(i * step).roundToInt()}° : ${v.summary}")
             for (it in v.items) {
                 val b = heading + (it.x - 0.5) * hfovDeg

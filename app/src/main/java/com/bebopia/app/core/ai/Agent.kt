@@ -154,6 +154,9 @@ class Agent(
     /** Plans de cinéma. */
     var shots: Shots? = null
 
+    /** Mesure des distances par parallaxe (montée de 25 cm). */
+    var ranger: Ranger? = null
+
     /** Repérage, mémoire de la scène, portes, recherche dans la maison. */
     var surveyor: Surveyor? = null
     var scene: SceneMemory? = null
@@ -801,11 +804,25 @@ class Agent(
                     val dist = kotlin.math.hypot(f0, r0)
                     val motion = Math.toDegrees(kotlin.math.atan2(r0, f0))
                     val seen = dist >= 0.15 && kotlin.math.abs(com.bebopia.app.core.norm180(motion - drone.cameraOffset())) < 35
-                    val (ok, refusal) = if (seen) safeForward(dist) else dist to null
+                    var (ok, refusal) = if (seen) safeForward(dist) else dist to null
+                    // En intérieur, avant d'avancer vers ce qu'on voit : distance mesurée (parallaxe), plus fiable
+                    var measuredNote = ""
+                    if (refusal == null && seen && drone.indoor && f0 > 0.1) {
+                        ranger?.let { rg ->
+                            val d = rg.recent() ?: rg.measure()
+                            val c = d?.center
+                            if (c != null && c < com.bebopia.app.core.vision.Parallax.MAX_M) {
+                                val room = c - 0.5
+                                measuredNote = " (distance mesurée devant : %.1f m)".format(c)
+                                if (room < 0.1) refusal = "refusé : obstacle mesuré à %.1f m devant. Recule, tourne ou monte.".format(c)
+                                else if (room < ok) ok = room
+                            }
+                        }
+                    }
                     if (refusal != null) refusal
                     else {
                         val k = if (dist > 0) (ok / dist).coerceIn(0.0, 1.0) else 1.0
-                        val r = drone.move(f0 * k, r0 * k, up, num(action, "yaw")) + belowNote
+                        val r = drone.move(f0 * k, r0 * k, up, num(action, "yaw")) + belowNote + measuredNote
                         if (k < 0.99) r + " (raccourci à %.1f m à cause d'un obstacle)".format(ok) else r
                     }
                     }

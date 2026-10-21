@@ -10,6 +10,12 @@ val djiApiKey: String = (project.findProperty("djiApiKey") as String?)?.takeIf {
     ?: System.getenv("DJI_API_KEY")?.takeIf { it.isNotBlank() }
     ?: ""
 
+// Clé Gemini intégrée à l'APK (facultatif) : propriété -PgeminiKey=... ou variable GEMINI_API_KEY.
+// Jamais dans le code : elle n'est lue qu'au moment de construire l'APK.
+val geminiKey: String = (project.findProperty("geminiKey") as String?)?.takeIf { it.isNotBlank() }
+    ?: System.getenv("GEMINI_API_KEY")?.takeIf { it.isNotBlank() }
+    ?: ""
+
 android {
     namespace = "com.bebopia.app"
     compileSdk = 35
@@ -18,9 +24,10 @@ android {
         applicationId = "com.bebopia.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 35
-        versionName = "2.9"
+        versionCode = 36
+        versionName = "3.0"
         manifestPlaceholders["DJI_API_KEY"] = djiApiKey
+        buildConfigField("String", "GEMINI_KEY", "\"" + geminiKey + "\"")
         // Le kit DJI n'existe que pour les processeurs ARM (tous les téléphones récents).
         // -PonlyArm64=true : APK plus léger, pour les téléphones 64 bits (presque tous depuis 2017).
         ndk {
@@ -62,6 +69,18 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
+    }
+
+    // Même signature pour tous les APK de développement (sinon Android refuse la mise à jour,
+    // il faut désinstaller, et les réglages - dont la clé Gemini - sont perdus).
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("signing/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
     androidResources {
         noCompress += "tflite"
