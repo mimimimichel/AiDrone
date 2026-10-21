@@ -526,7 +526,8 @@ function drawLeft(s,tel){
   function row(k,v,c){t(k,x+18,ly,20,GREY);t(v,x+w-18,ly,20,c||'#fff','right',true);ly+=34;}
   row('GPS',(tel.gps||'—')+(typeof tel.sats==='number'?' · '+tel.sats+' sat':''),num(tel.sats,0)>=8?HUD:WARN);
   row('Mode de vol',tel.flightMode||'—');
-  row('Capteurs dessous',tel.vps===undefined?'—':tel.vps?'actifs':'inactifs',tel.vps?HUD:WARN);
+  {const bl={sol:['au sol',GREY],actifs:['actifs',HUD],gps:['GPS suffit',HUD],trop_haut:['trop haut (normal)',GREY],trop_bas:['près du sol',GREY],inactifs:['INACTIFS',RED]}[tel.below];
+    row('Capteurs dessous',bl?bl[0]:(tel.vps===undefined?'—':tel.vps?'actifs':'—'),bl?bl[1]:GREY);}
   row('Détecteur obstacles',s.guardOn?(s.guardWatching?'surveille':'prêt'):'coupé',s.guardOn?HUD:WARN);
   row('Vidéo',s.video?'reçue':'absente',s.video?HUD:RED);
 }

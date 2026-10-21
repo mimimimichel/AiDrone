@@ -112,6 +112,8 @@ public class DjiLink {
         m.put("sats", satellites);
         m.put("flightMode", flightMode);
         m.put("vps", vps);
+        String[] bs = belowState();
+        m.put("below", bs[0]);
         m.put("imuPreheating", imuPreheating);
         m.put("lowBattery", lowBattery);
         m.put("rec", recording);
@@ -131,6 +133,21 @@ public class DjiLink {
             m.put("homeSource", "GPS");
         }
         return m;
+    }
+
+    /**
+     * État réel des capteurs du dessous. Le drone ne dit qu'une chose : « je m'en sers en ce moment pour tenir ma position ».
+     * C'est faux au sol (normal), quand le GPS suffit (normal dehors), et hors de leur portée (sous ~0,5 m ou au-dessus de ~10 m).
+     * Renvoie {code, texte} : sol, actifs, gps, trop_haut, trop_bas, inactifs.
+     */
+    public String[] belowState() {
+        boolean used = vps || tofUsed || flightMode.toUpperCase(java.util.Locale.ROOT).contains("OPTI");
+        if (!flying) return new String[] { "sol", "au sol : le drone ne s'en sert qu'une fois en l'air (vérifié après le décollage)" };
+        if (used) return new String[] { "actifs", "actifs : le drone tient sa position grâce à eux" };
+        if (altitude > 9) return new String[] { "trop_haut", String.format(java.util.Locale.FRANCE, "pas utilisés à %.0f m : trop haut pour eux (portée ~10 m), normal", altitude) };
+        if (altitude < 0.4) return new String[] { "trop_bas", "pas encore utilisés : trop près du sol" };
+        if (satellites >= 8) return new String[] { "gps", "pas utilisés : le GPS suffit (normal dehors)" };
+        return new String[] { "inactifs", "INACTIFS alors que le drone vole sans GPS : il risque de dériver" };
     }
 
     /** Cap du drone (boussole), en degrés de -180 à 180. */
@@ -219,7 +236,7 @@ public class DjiLink {
         StringBuilder b = new StringBuilder();
         b.append("mode de vol ").append(flightMode.isEmpty() ? "?" : flightMode);
         b.append(", GPS ").append(gps).append(" (").append(satellites).append(" satellites)");
-        b.append(", capteurs du dessous ").append(vps ? "actifs" : "inactifs");
+        b.append(", capteurs du dessous ").append(belowState()[1]);
         if (imuPreheating) b.append(", centrale inertielle en préchauffage (attends 1 à 2 min)");
         if (motorsOn) b.append(", moteurs allumés");
         if (lowBattery) b.append(", batterie faible");
@@ -231,7 +248,7 @@ public class DjiLink {
             }
             if (f != null && !f.isVirtualStickControlModeAvailable()) b.append(", pilotage par l'app indisponible pour l'instant");
         } catch (Throwable ignored) { }
-        if (!vps && !tofUsed && satellites < 6) b.append(". Le drone ne voit ni le GPS ni le sol : ouvre 🔧 Diagnostic pour comprendre et lever le blocage");
+        if ("inactifs".equals(belowState()[0])) b.append(". Le drone ne voit ni le GPS ni le sol : ouvre 🔧 Diagnostic pour comprendre");
         for (String[] m : djiMessages) b.append(". Drone : ").append(m[0]).append(m[1].isEmpty() ? "" : " (" + m[1] + ")");
         return b.toString();
     }
@@ -254,12 +271,12 @@ public class DjiLink {
         else if (satellites >= 6) c.add(new String[] { "attention", "GPS", satellites + " satellites : faible, attends un peu à découvert" });
         else c.add(new String[] { "attention", "GPS", satellites + " satellite(s) : normal en intérieur. Le drone doit alors tenir sa position avec ses capteurs du dessous." });
         // Capteurs du dessous (caméras de positionnement + capteur de hauteur)
-        boolean below = vps || tofUsed;
-        if (below) c.add(new String[] { "ok", "Capteurs du dessous", "actifs" + (tofUsed ? String.format(java.util.Locale.FRANCE, " (hauteur mesurée %.1f m)", tofHeight) : "") });
-        else c.add(new String[] { satellites >= 6 ? "attention" : "bloquant", "Capteurs du dessous",
-            "inactifs. Causes possibles : pièce trop sombre ; sol uni, brillant ou réfléchissant (carrelage clair, vitre, eau) ; " +
+        String[] bs = belowState();
+        if (!"inactifs".equals(bs[0])) c.add(new String[] { "ok", "Capteurs du dessous", bs[1] + (tofUsed ? String.format(java.util.Locale.FRANCE, " (hauteur mesurée %.1f m)", tofHeight) : "") });
+        else c.add(new String[] { "bloquant", "Capteurs du dessous",
+            bs[1] + ". Causes possibles : pièce trop sombre ; sol uni, brillant ou réfléchissant (carrelage clair, vitre, eau, moquette unie) ; " +
             "capteurs sous le drone masqués (cage, protection, autocollant, poussière : nettoie-les doucement) ; " +
-            "positionnement visuel désactivé dans les réglages (bouton ci-dessous). Sur certains Mavic, ils ne s'activent qu'une fois le drone posé à plat, moteurs prêts." });
+            "positionnement visuel désactivé dans les réglages (bouton ci-dessous). Pose un tapis à motifs sous la zone de vol et allume la lumière." });
         if (tofError) c.add(new String[] { "bloquant", "Capteur de hauteur", "en erreur : nettoie le dessous du drone, redémarre-le" });
         // Boussole
         try {
