@@ -702,6 +702,7 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
                         fontWeight = FontWeight.Bold,
                     )
                 }
+                SettingSwitch("🎮 Manettes du casque : « avant » suit mon regard (sinon : regard libre, cap de vol fixé au manche)", s.sticksFollowLook) { vm.changeSticksMode(it) }
                 SettingSwitch("Le drone parle à voix haute", speak) { speak = it }
                 SettingSwitch("Voix de robot", robotVoice) { robotVoice = it }
                 SettingSwitch("🎬 Filmer chaque vol en entier (carte mémoire du drone)", s.autoRecord) { vm.changeAutoRecord(it) }

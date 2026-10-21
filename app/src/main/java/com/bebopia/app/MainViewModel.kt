@@ -108,6 +108,7 @@ data class UiState(
     val indoor: Boolean = false,
     /** auto, interieur ou exterieur */
     val envMode: String = "auto",
+    val sticksFollowLook: Boolean = false,
 )
 
 /** Un point du diagnostic du Mavic : état (ok / attention / bloquant), titre, explication. */
@@ -344,6 +345,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             marks = com.bebopia.app.core.vision.Marks.current(),
             indoor = d?.indoor ?: false,
             envMode = envMode,
+            sticksFollowLook = sticksFollowLook,
         )
     }
 
@@ -403,6 +405,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // Repérage, mémoire de la scène, portes, recherche dans la maison
         val sc = com.bebopia.app.core.ai.SceneMemory { d.indoor }
         d.space = sc
+        d.sticksFollowLook = sticksFollowLook
         val sv = com.bebopia.app.core.ai.Surveyor(d, eyes,
             com.bebopia.app.core.ai.SceneAnalyzer { j, t, down, hf -> vision.analyzeView(j, t, down, hf) }, sc, hfov, simulation,
             shouldStop = { a.paused }, report = { a.addChat(Role.SYSTEM, it) },
@@ -1181,6 +1184,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .put("activity", clean(s.activity))
             .put("rec", s.recording)
             .put("sticks", questActive)
+            .put("sticksMode", if (sticksFollowLook) "regard" else "libre")
             .put("indoor", s.indoor)
             .put("scene", runCatching { scene?.mapJson() }.getOrNull() ?: org.json.JSONObject.NULL)
             .put("moveArrow", runCatching {
@@ -1264,7 +1268,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         runCatching { d.sticks(f, r, u, yaw) }
     }
 
+    /** Mode des manettes : regard libre (false) ou suit le regard (true). */
+    var sticksFollowLook: Boolean
+        get() = prefs.getBoolean("sticks_follow_look", false)
+        private set(v) = prefs.edit().putBoolean("sticks_follow_look", v).apply()
+
+    fun changeSticksMode(followLook: Boolean) {
+        sticksFollowLook = followLook
+        drone?.sticksFollowLook = followLook
+        sysMessage(if (followLook) "🎮 Manettes : SUIT LE REGARD — « avant » est là où tu regardes, tourner la tête fait tourner le vol."
+            else "🎮 Manettes : REGARD LIBRE — le manche gauche fixe le cap de vol, tu peux regarder autour sans changer de direction.")
+        refresh()
+    }
+
     private fun questButton(b: String) {
+        if (b == "mode") { changeSticksMode(!sticksFollowLook); return }
         val now = System.currentTimeMillis()
         if (now - questButtonAt < 2000) return
         questButtonAt = now

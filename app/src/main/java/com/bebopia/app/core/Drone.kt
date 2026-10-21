@@ -190,6 +190,12 @@ abstract class DroneBase(val limits: Limits) {
     /** Arrête toute vitesse continue. */
     open fun stopVelocity() {}
 
+    /**
+     * Manettes avec le casque : false = regard libre (le manche gauche fixe le cap de vol, la tête regarde autour sans
+     * changer la direction) ; true = suit le regard (« avant » = là où regarde la caméra, tourner la tête fait tourner le vol).
+     */
+    @Volatile var sticksFollowLook = false
+
     /** Cap de vol aux manettes quand il diffère de la caméra (le pilote tourne la tête), sinon null. */
     open fun travelHeading(): Double? = null
 

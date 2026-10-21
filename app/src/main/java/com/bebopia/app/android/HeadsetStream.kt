@@ -821,7 +821,9 @@ function drawOSD(){
       ln(cx+ox-34,by2,cx+ox+34,by2,'rgba(189,244,255,.2)',1);ln(cx+ox,by2-34,cx+ox,by2+34,'rgba(189,244,255,.2)',1);
       o.fillStyle=ACC;o.beginPath();o.arc(cx+ox+sx*30,by2+sy*30,8,0,Math.PI*2);o.fill();
       tx(lb,cx+ox,by2+58,12,'rgba(189,244,255,.7)','center',700,3);}
-    tx('◉ MANETTES',cx-R-130,by2-48,15,ACC,'center',700,4);}
+    tx('◉ MANETTES',cx-R-130,by2-48,15,ACC,'center',700,4);
+    tx(s.sticksMode==='regard'?'SUIT LE REGARD':'REGARD LIBRE',cx+R+130,by2-48,15,s.sticksMode==='regard'?AMB:ACC,'center',700,3);
+    tx('clic manche gauche : changer',cx+R+130,by2+76,11,'rgba(189,244,255,.5)','center',600,1);}
   for(const [hold,lb,col] of [[pad.holdA,'DÉCOLLAGE',ACC],[pad.holdB,'ATTERRISSAGE',AMB]]){if(!hold)continue;
     const k=Math.min(1,(performance.now()-hold)/1500);o.lineWidth=8;o.strokeStyle='rgba(189,244,255,.2)';o.beginPath();o.arc(cx,cy,R+40,0,Math.PI*2);o.stroke();
     o.strokeStyle=col;o.beginPath();o.arc(cx,cy,R+40,-Math.PI/2,-Math.PI/2+k*Math.PI*2);o.stroke();o.lineWidth=2;
@@ -885,7 +887,7 @@ if(!window.isSecureContext){
 vrBtn.onclick=()=>{startAudio();startVR();};
 document.getElementById('talk').onclick=startAudio;
 let recenter=true, lastHead=0;
-const pad={lx:0,ly:0,rx:0,ry:0,active:false,holdA:0,holdB:0,sentA:false,sentB:false};
+const pad={lx:0,ly:0,rx:0,ry:0,active:false,holdA:0,holdB:0,sentA:false,sentB:false,clk:false,mode:false};
 
 async function startVR(){
   const canvas=document.getElementById('gl');
@@ -921,6 +923,7 @@ async function startVR(){
     for(const src of session.inputSources){const gp=src.gamepad;if(!gp||gp.axes.length<4)continue;
       const x=gp.axes[2]||0, y=gp.axes[3]||0, b4=gp.buttons[4]&&gp.buttons[4].pressed, b5=gp.buttons[5]&&gp.buttons[5].pressed;
       if(src.handedness==='left'){pad.lx=x;pad.ly=y;
+        const clk=gp.buttons[3]&&gp.buttons[3].pressed; if(clk&&!pad.clk)pad.mode=true; pad.clk=clk;
         if(b4){size=Math.max(0.6,size-0.01);setQuad();} if(b5){size=Math.min(1.5,size+0.01);setQuad();}}
       else{pad.rx=x;pad.ry=y;a=b4;b=b5;}}
     pad.active=Math.max(Math.abs(pad.lx),Math.abs(pad.ly),Math.abs(pad.rx),Math.abs(pad.ry))>0.12;
@@ -928,6 +931,7 @@ async function startVR(){
     let bt='';
     if(pad.holdA&&tm-pad.holdA>1500&&!pad.sentA){bt='takeoff';pad.sentA=true;} if(!a)pad.sentA=false;
     if(pad.holdB&&tm-pad.holdB>1500&&!pad.sentB){bt='land';pad.sentB=true;} if(!b)pad.sentB=false;
+    if(pad.mode&&!bt){bt='mode';pad.mode=false;dirty=true;}
     if(pad.active||pad.holdA||pad.holdB)dirty=true;
     const pose=fr.getViewerPose(ref);if(!pose)return;
     const q=pose.transform.orientation;

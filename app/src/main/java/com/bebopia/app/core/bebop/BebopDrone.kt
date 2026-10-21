@@ -119,8 +119,15 @@ class BebopDrone(
     override fun sticks(forward: Double, right: Double, up: Double, yawRate: Double) {
         // Le Bebop se commande en % de son inclinaison et de ses vitesses maximales
         fun pct(v: Double, max: Double) = (v / max * 100).toInt().coerceIn(-100, 100)
-        val f = if (forwardBlocked()) minOf(forward, 0.0) else forward
-        pcmd = intArrayOf(pct(right, 6.0), pct(f, 6.0), pct(yawRate, 100.0), pct(up, 1.5))
+        var fw = forward
+        var rt = right
+        if (sticksFollowLook && headRecent) {
+            val d = Math.toRadians(notedHeadYaw.coerceIn(-35.0, 35.0))
+            fw = forward * Math.cos(d) - right * Math.sin(d)
+            rt = forward * Math.sin(d) + right * Math.cos(d)
+        }
+        val f = if (forwardBlocked()) minOf(fw, 0.0) else fw
+        pcmd = intArrayOf(pct(rt, 6.0), pct(f, 6.0), pct(yawRate, 100.0), pct(up, 1.5))
         pcmdUntil = System.currentTimeMillis() + 300
         setForward(f > 0.2)
         synchronized(this) {

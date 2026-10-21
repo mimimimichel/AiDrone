@@ -235,16 +235,19 @@ class DjiDrone(
             val c = droneYawCenter!!
             yr = followRate(c)
             stickFollow = true
-            // Le drone regarde ailleurs (tête tournée) : on tourne le vecteur vitesse du cap de vol vers son repère actuel.
-            val d = Math.toRadians(angleDiff(c - link.heading()))
-            f = forward * kotlin.math.cos(d) - right * kotlin.math.sin(d)
-            r = forward * kotlin.math.sin(d) + right * kotlin.math.cos(d)
+            // Regard libre : le drone regarde ailleurs (tête tournée), on tourne le vecteur vitesse du cap de vol vers son
+            // repère actuel. Suit le regard : rien à faire, « avant » est là où regarde la caméra.
+            if (!sticksFollowLook) {
+                val d = Math.toRadians(angleDiff(c - link.heading()))
+                f = forward * kotlin.math.cos(d) - right * kotlin.math.sin(d)
+                r = forward * kotlin.math.sin(d) + right * kotlin.math.cos(d)
+            }
         }
         velocity(f, r, up, yr, holdMs = 300)
     }
 
     /** Cap de vol aux manettes (différent de la caméra quand le pilote tourne la tête), null hors casque. */
-    override fun travelHeading(): Double? = if (following()) droneYawCenter else null
+    override fun travelHeading(): Double? = if (following() && !sticksFollowLook) droneYawCenter else null
 
     override fun stopVelocity() {
         if (velUntil != 0L) velUntil = 1L
