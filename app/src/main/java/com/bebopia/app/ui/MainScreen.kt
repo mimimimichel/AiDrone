@@ -77,6 +77,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.bebopia.app.MainViewModel
+import kotlinx.coroutines.launch
 import com.bebopia.app.Mode
 import com.bebopia.app.UiState
 import com.bebopia.app.core.ai.ChatLine
@@ -98,6 +99,7 @@ fun MainScreen(vm: MainViewModel) {
     val s by vm.state.collectAsState()
     val context = LocalContext.current
     var showSettings by remember { mutableStateOf(false) }
+    var showDiag by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
 
     fun granted(p: String) = ContextCompat.checkSelfPermission(context, p) == PackageManager.PERMISSION_GRANTED
@@ -151,6 +153,7 @@ fun MainScreen(vm: MainViewModel) {
             TextButton(onClick = { vm.setTrust(s.confirm) }) {
                 Text(if (s.confirm) "✋" else "🤝", fontSize = 20.sp)
             }
+            if (s.mode == Mode.MAVIC) TextButton(onClick = { showDiag = true }) { Text("🔧", fontSize = 20.sp) }
             TextButton(onClick = { showSettings = true }) { Text("⚙", fontSize = 22.sp, color = Color.White) }
         }
 
@@ -332,6 +335,7 @@ fun MainScreen(vm: MainViewModel) {
     }
 
     if (showSettings) SettingsDialog(vm, s) { showSettings = false }
+    if (showDiag) MavicDiagDialog(vm) { showDiag = false }
 }
 
 private fun statusLabel(s: UiState): String {
@@ -667,6 +671,91 @@ private fun SettingsDialog(vm: MainViewModel, s: UiState, onDismiss: () -> Unit)
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 8.dp),
                 )
+            }
+        },
+    )
+}
+
+/** Diagnostic du Mavic : pourquoi il ne décolle pas, et les déblocages possibles (comme dans DJI Fly). */
+@Composable
+private fun MavicDiagDialog(vm: MainViewModel, onDismiss: () -> Unit) {
+    var report by remember { mutableStateOf<com.bebopia.app.MavicReport?>(null) }
+    var busy by remember { mutableStateOf<String?>(null) }
+    var last by remember { mutableStateOf("") }
+    var tick by remember { mutableStateOf(0) }
+    LaunchedEffect(tick) {
+        report = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { vm.mavicReport() }
+    }
+    // Rafraîchi toutes les 2 s (suivi d'un étalonnage, capteurs qui s'activent…)
+    LaunchedEffect(Unit) { while (true) { kotlinx.coroutines.delay(2000); if (busy == null) tick++ } }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    fun act(kind: String) {
+        busy = kind
+        scope.launch {
+            last = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { vm.mavicAction(kind) }
+            busy = null
+            tick++
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("🔧 Diagnostic du Mavic") },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Fermer") } },
+        text = {
+            val r = report
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                if (r == null) {
+                    CircularProgressIndicator()
+                    return@Column
+                }
+                r.checks.forEach { c ->
+                    val (icon, col) = when (c.state) {
+                        "ok" -> "✅" to Color(0xFF7CFC9A)
+                        "attention" -> "⚠️" to Color(0xFFFFD54F)
+                        else -> "⛔" to Color(0xFFFF6E6E)
+                    }
+                    Text("$icon ${c.title}", fontWeight = FontWeight.Bold, color = col, fontSize = 14.sp, modifier = Modifier.padding(top = 6.dp))
+                    Text(c.detail, fontSize = 13.sp)
+                }
+                if (r.compassCal != "NOT_CALIBRATING" && r.compassCal != "UNKNOWN") {
+                    Text(
+                        when (r.compassCal) {
+                            "HORIZONTAL" -> "🧭 Étape 1 : drone à plat, tourne sur toi-même d'un tour complet"
+                            "VERTICAL" -> "🧭 Étape 2 : drone nez vers le bas, tourne sur toi-même d'un tour complet"
+                            "SUCCESSFUL" -> "🧭 Boussole étalonnée ✅"
+                            "FAILED" -> "🧭 Étalonnage raté : éloigne-toi du métal (et des téléphones, clés, voitures) et recommence"
+                            else -> "🧭 Étalonnage : ${r.compassCal}"
+                        },
+                        fontWeight = FontWeight.Bold, color = Color(0xFF4FC3F7), modifier = Modifier.padding(top = 10.dp),
+                    )
+                }
+                if (r.messages.isNotEmpty()) {
+                    Text("Messages du drone", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
+                    if (r.explained != null) Text(r.explained, fontSize = 13.sp)
+                    else r.messages.forEach { (reason, sol) -> Text("• $reason" + if (sol.isNotBlank()) " → $sol" else "", fontSize = 13.sp) }
+                }
+                Text("Déblocages", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 14.dp))
+                if (busy != null) Text("⏳ En cours…", fontSize = 13.sp)
+                if (last.isNotBlank()) Text(last, fontSize = 13.sp, color = Color(0xFF4FC3F7))
+                if (r.visionOn == false) OutlinedButton(onClick = { act("vision_on") }, enabled = busy == null) { Text("Activer les capteurs du dessous") }
+                when (r.noGpsAllowed) {
+                    false -> {
+                        OutlinedButton(onClick = { act("nogps_allow") }, enabled = busy == null) { Text("Autoriser le décollage sans GPS") }
+                        Text("Utile en intérieur. Sans GPS, il faut que les capteurs du dessous marchent, sinon le drone dérive.",
+                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    true -> OutlinedButton(onClick = { act("nogps_lock") }, enabled = busy == null) { Text("Reverrouiller le décollage sans GPS") }
+                    null -> {}
+                }
+                if (r.compassCal == "HORIZONTAL" || r.compassCal == "VERTICAL") {
+                    OutlinedButton(onClick = { act("compass_stop") }, enabled = busy == null) { Text("Arrêter l'étalonnage de la boussole") }
+                } else {
+                    OutlinedButton(onClick = { act("compass") }, enabled = busy == null) { Text("Étalonner la boussole") }
+                }
+                OutlinedButton(onClick = { act("imu") }, enabled = busy == null) { Text("Étalonner la centrale inertielle (5-10 min)") }
+                OutlinedButton(onClick = { act("reboot") }, enabled = busy == null) { Text("Redémarrer le contrôleur de vol") }
+                Text("Étalonnages et redémarrage : drone posé, moteurs arrêtés.", fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
             }
         },
     )

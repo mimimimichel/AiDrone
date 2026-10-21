@@ -56,6 +56,11 @@ public class DjiLink {
     private volatile boolean landingConfirmationNeeded = false;
     private volatile String flightMode = "";
     private volatile boolean imuPreheating = false;
+    // Diagnostic avant décollage
+    private volatile boolean tofUsed = false, tofError = false;
+    private volatile float tofHeight = 0;
+    private volatile java.util.List<String[]> djiMessages = new java.util.ArrayList<>();
+    private volatile String compassCal = "NOT_CALIBRATING";
     private volatile String gps = "?";
     private volatile int satellites = 0;
     private volatile boolean vps = false;
@@ -226,7 +231,117 @@ public class DjiLink {
             }
             if (f != null && !f.isVirtualStickControlModeAvailable()) b.append(", pilotage par l'app indisponible pour l'instant");
         } catch (Throwable ignored) { }
+        if (!vps && !tofUsed && satellites < 6) b.append(". Le drone ne voit ni le GPS ni le sol : ouvre 🔧 Diagnostic pour comprendre et lever le blocage");
+        for (String[] m : djiMessages) b.append(". Drone : ").append(m[0]).append(m[1].isEmpty() ? "" : " (" + m[1] + ")");
         return b.toString();
+    }
+
+    // ---- diagnostic et réglages avant décollage ------------------------------------------------
+    public interface BoolDone { void done(Boolean value, String error); }
+
+    /** Messages d'alerte actuels du drone : {raison, solution, code}. */
+    public java.util.List<String[]> djiMessages() { return djiMessages; }
+
+    /**
+     * Points vérifiés avant le décollage : {état (ok / attention / bloquant), titre, explication}.
+     */
+    public java.util.List<String[]> checks() {
+        java.util.ArrayList<String[]> c = new java.util.ArrayList<>();
+        boolean connected = isConnected();
+        if (!connected) { c.add(new String[] { "bloquant", "Drone", "non connecté" }); return c; }
+        // GPS
+        if (satellites >= 8) c.add(new String[] { "ok", "GPS", satellites + " satellites" });
+        else if (satellites >= 6) c.add(new String[] { "attention", "GPS", satellites + " satellites : faible, attends un peu à découvert" });
+        else c.add(new String[] { "attention", "GPS", satellites + " satellite(s) : normal en intérieur. Le drone doit alors tenir sa position avec ses capteurs du dessous." });
+        // Capteurs du dessous (caméras de positionnement + capteur de hauteur)
+        boolean below = vps || tofUsed;
+        if (below) c.add(new String[] { "ok", "Capteurs du dessous", "actifs" + (tofUsed ? String.format(java.util.Locale.FRANCE, " (hauteur mesurée %.1f m)", tofHeight) : "") });
+        else c.add(new String[] { satellites >= 6 ? "attention" : "bloquant", "Capteurs du dessous",
+            "inactifs. Causes possibles : pièce trop sombre ; sol uni, brillant ou réfléchissant (carrelage clair, vitre, eau) ; " +
+            "capteurs sous le drone masqués (cage, protection, autocollant, poussière : nettoie-les doucement) ; " +
+            "positionnement visuel désactivé dans les réglages (bouton ci-dessous). Sur certains Mavic, ils ne s'activent qu'une fois le drone posé à plat, moteurs prêts." });
+        if (tofError) c.add(new String[] { "bloquant", "Capteur de hauteur", "en erreur : nettoie le dessous du drone, redémarre-le" });
+        // Boussole
+        try {
+            FlightController f = fc();
+            if (f != null && f.getCompass() != null) {
+                if (f.getCompass().isCalibrating()) c.add(new String[] { "attention", "Boussole", "étalonnage en cours (" + compassCal + ")" });
+                else if (f.getCompass().hasError()) c.add(new String[] { "bloquant", "Boussole", "perturbée : éloigne le drone du métal (cage métallique, table, ferraille, voiture, téléphone) puis étalonne-la (bouton ci-dessous)" });
+                else c.add(new String[] { "ok", "Boussole", "normale" });
+            }
+        } catch (Throwable ignored) { }
+        if (imuPreheating) c.add(new String[] { "attention", "Centrale inertielle", "préchauffage : attends 1 à 2 minutes" });
+        Integer b = battery;
+        if (b != null) c.add(new String[] { b < 20 ? "bloquant" : b < 35 ? "attention" : "ok", "Batterie", b + " %" });
+        c.add(new String[] { flightMode.contains("ATTI") ? "attention" : "ok", "Mode de vol",
+            (flightMode.isEmpty() ? "?" : flightMode) + (flightMode.contains("ATTI") ? " : le drone ne tient pas sa position tout seul (il dérive)" : "") });
+        return c;
+    }
+
+    /** Étalonnage de la boussole : le drone se tourne à la main (à plat puis nez vers le bas). */
+    public void compassCalibration(boolean start, Done d) {
+        FlightController f = fc();
+        if (noFc(f, d)) return;
+        if (f.getCompass() == null) { if (d != null) d.done("boussole indisponible"); return; }
+        if (start) f.getCompass().startCalibration(cb(d)); else f.getCompass().stopCalibration(cb(d));
+    }
+
+    public String compassCalibrationState() { return compassCal; }
+
+    /** Positionnement visuel (capteurs du dessous). */
+    public void visionPositioning(boolean on, Done d) {
+        FlightController f = fc();
+        if (noFc(f, d)) return;
+        FlightAssistantHolder.set(f, on, cb(d), d);
+    }
+
+    public void getVisionPositioning(final BoolDone d) {
+        FlightController f = fc();
+        if (f == null || f.getFlightAssistant() == null) { d.done(null, "réglage indisponible sur ce drone"); return; }
+        f.getFlightAssistant().getVisionAssistedPositioningEnabled(new CommonCallbacks.CompletionCallbackWith<Boolean>() {
+            @Override public void onSuccess(Boolean v) { d.done(v, null); }
+            @Override public void onFailure(DJIError e) { d.done(null, e.getDescription()); }
+        });
+    }
+
+    /** Décollage sans GPS : interdit (verrou) ou autorisé. */
+    public void getTakeoffWithoutGpsAllowed(final BoolDone d) {
+        FlightController f = fc();
+        if (f == null) { d.done(null, "drone non connecté"); return; }
+        try {
+            f.isLockTakeoffWithoutGPS(new CommonCallbacks.CompletionCallbackWith<Boolean>() {
+                @Override public void onSuccess(Boolean locked) { d.done(locked == null ? null : !locked, null); }
+                @Override public void onFailure(DJIError e) { d.done(null, e.getDescription()); }
+            });
+        } catch (Throwable t) { d.done(null, "réglage indisponible sur ce drone"); }
+    }
+
+    @SuppressWarnings("unchecked")
+    public void allowTakeoffWithoutGps(boolean allow, Done d) {
+        FlightController f = fc();
+        if (noFc(f, d)) return;
+        try { f.lockTakeoffWithoutGPS(!allow, cb(d)); } catch (Throwable t) { if (d != null) d.done("réglage indisponible sur ce drone"); }
+    }
+
+    /** Étalonnage de la centrale inertielle (drone posé à plat, ne pas le toucher). */
+    public void imuCalibration(Done d) {
+        FlightController f = fc();
+        if (noFc(f, d)) return;
+        f.startIMUCalibration(cb(d));
+    }
+
+    /** Redémarre le contrôleur de vol (le drone doit être posé). */
+    public void rebootFlightController(Done d) {
+        FlightController f = fc();
+        if (noFc(f, d)) return;
+        f.reboot(cb(d));
+    }
+
+    private static class FlightAssistantHolder {
+        static void set(FlightController f, boolean on, CommonCallbacks.CompletionCallback cb, Done d) {
+            if (f.getFlightAssistant() == null) { if (d != null) d.done("réglage indisponible sur ce drone"); return; }
+            f.getFlightAssistant().setVisionAssistedPositioningEnabled(on, cb);
+        }
     }
 
     private void status(String s) {
@@ -353,6 +468,9 @@ public class DjiLink {
                     if (s.getAircraftLocation() != null) altitude = s.getAircraftLocation().getAltitude();
                     flightMode = s.getFlightModeString() == null ? "" : s.getFlightModeString();
                     imuPreheating = s.isIMUPreheating();
+                    tofUsed = s.isUltrasonicBeingUsed();
+                    tofError = s.doesUltrasonicHaveError();
+                    tofHeight = s.getUltrasonicHeightInMeters();
                     gps = s.getGPSSignalLevel() == null ? "?" : s.getGPSSignalLevel().name();
                     satellites = s.getSatelliteCount();
                     vps = s.isVisionPositioningSensorBeingUsed();
@@ -383,6 +501,27 @@ public class DjiLink {
                         Listener li = listener;
                         if (li != null) li.onPilotSticks();
                     }
+                }
+            });
+        }
+        // Messages d'alerte du drone (ceux que DJI Fly affiche) : raison et solution
+        try {
+            a.setDiagnosticsInformationCallback(new dji.sdk.base.DJIDiagnostics.DiagnosticsInformationCallback() {
+                @Override
+                public void onUpdate(java.util.List<dji.sdk.base.DJIDiagnostics> list) {
+                    java.util.ArrayList<String[]> out = new java.util.ArrayList<>();
+                    if (list != null) for (dji.sdk.base.DJIDiagnostics d : list) {
+                        out.add(new String[] { d.getReason() == null ? "" : d.getReason(), d.getSolution() == null ? "" : d.getSolution(), String.valueOf(d.getCode()) });
+                    }
+                    djiMessages = out;
+                }
+            });
+        } catch (Throwable t) { Log.w(TAG, "diagnostics DJI", t); }
+        if (f != null && f.getCompass() != null) {
+            f.getCompass().setCalibrationStateCallback(new dji.common.flightcontroller.CompassCalibrationState.Callback() {
+                @Override
+                public void onUpdate(dji.common.flightcontroller.CompassCalibrationState st) {
+                    compassCal = st == null ? "UNKNOWN" : st.name();
                 }
             });
         }

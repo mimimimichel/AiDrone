@@ -78,11 +78,22 @@ Dans ⚙, active **Vue dans le casque**. L'app affiche une adresse du type `http
 - **gâchette avant** : recentrer (la direction actuelle devient « devant »).
 **Directions** : « avance », « à droite » sont toujours par rapport à la vue du drone (ce que tu vois dans le casque) au moment où tu donnes l'ordre. Si tu tournes la tête pendant le déplacement, le drone continue de suivre ta tête et garde la direction de départ. Une flèche violette sur la mini-carte montre où il va (en pointillés quand il attend ton « oui »). La rotation par la tête s'arrête pendant un suivi de cible ou un plan de cinéma, ou si le casque ne répond plus pendant une seconde.
 
-**En VR**, la caméra occupe presque tout le champ de vision, avec des infos discrètes dans les coins (batterie, temps de vol, cap, horizon, vitesse, altitude, retour au départ, nacelle, état de l'IA, étape du plan, sous-titres) ; joystick haut/bas pour agrandir ou réduire l'image. **Sur écran plat**, la page est un cockpit d'avion. Au centre, la vidéo avec un affichage tête haute : horizon artificiel et indicateur de roulis, cap (boussole) avec le point de départ (H), échelles de vitesse et d'altitude (plafond en rouge), vitesse verticale, angle de la nacelle, alerte d'obstacle, proposition de l'IA à valider et sous-titres. À gauche : batterie, temps de vol, retour au départ (flèche et distance), GPS, mode de vol, capteurs. À droite : état de l'IA, plan en cours étape par étape, conversation. En haut : heure et alertes ; en bas : commandes du casque.
+**En VR**, un affichage tête haute épuré, façon science-fiction (traits fins bleu glacier, réticule circulaire, échelles de vitesse et d'altitude, panneaux en bas avec la carte et l'anneau de batterie), et un **égaliseur** en haut à gauche qui s'anime quand l'IA parle (sur sa vraie voix quand l'audio passe par le casque). La caméra occupe presque tout le champ de vision, avec des infos discrètes dans les coins (batterie, temps de vol, cap, horizon, vitesse, altitude, retour au départ, nacelle, état de l'IA, étape du plan, sous-titres) ; joystick haut/bas pour agrandir ou réduire l'image. **Sur écran plat**, la page est un cockpit d'avion. Au centre, la vidéo avec un affichage tête haute : horizon artificiel et indicateur de roulis, cap (boussole) avec le point de départ (H), échelles de vitesse et d'altitude (plafond en rouge), vitesse verticale, angle de la nacelle, alerte d'obstacle, proposition de l'IA à valider et sous-titres. À gauche : batterie, temps de vol, retour au départ (flèche et distance), GPS, mode de vol, capteurs. À droite : état de l'IA, plan en cours étape par étape, conversation. En haut : heure et alertes ; en bas : commandes du casque.
 
 **Mini-carte GPS** : en bas à gauche en VR (et dans le panneau de navigation du cockpit), une petite carte satellite montre le drone (flèche au centre), le point de décollage (H) et toi (point bleu, GPS du téléphone). Elle tourne avec le cap du drone (le haut = devant lui, N indique le nord) et zoome toute seule pour garder H et toi visibles. Il faut le GPS, donc dehors. Les images de carte passent par la 4G du téléphone et restent en cache : survole la zone une fois avec du réseau pour l'avoir hors connexion. Imagerie © Esri.
 
 **Parler à l'IA depuis le casque** : sur la page `https`, touche **🎙 Parler à l'IA ici** (autorise le micro la première fois), ou entre en VR : l'audio démarre aussi. Le micro du Quest remplace celui du téléphone et la voix de l'IA sort dans le casque (le téléphone se tait). La conversation s'ouvre toute seule si elle ne l'était pas. Tu peux toujours couper la parole à l'IA, et « stop » / « atterris » restent instantanés.
+
+## Le Mavic ne veut pas décoller ? (🔧 Diagnostic)
+
+Quand le Mavic est connecté, touche **🔧** en haut de l'écran. L'app vérifie ce qui bloque, comme DJI Fly : GPS, capteurs du dessous (et pourquoi ils ne s'activent pas : pièce sombre, sol uni ou brillant, capteurs masqués par la cage ou sales, réglage désactivé), boussole, centrale inertielle, batterie, mode de vol, et les messages d'alerte du drone, expliqués en français par l'IA. Boutons de déblocage, sans quitter l'app :
+
+- **Activer les capteurs du dessous** (positionnement visuel) s'ils sont désactivés ;
+- **Autoriser le décollage sans GPS** (le verrou que DJI Fly propose de lever en intérieur) — attention, sans GPS il faut que les capteurs du dessous marchent, sinon le drone dérive ;
+- **Étalonner la boussole** (guidé : à plat puis nez vers le bas, un tour sur toi-même, loin du métal) ;
+- **Étalonner la centrale inertielle** et **redémarrer le contrôleur de vol**.
+
+Si le décollage est refusé, le message dit maintenant pourquoi et renvoie vers 🔧.
 
 ## Reprendre la main (Mavic)
 

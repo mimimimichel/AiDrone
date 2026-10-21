@@ -104,6 +104,20 @@ data class UiState(
     val autoRecord: Boolean = false,
 )
 
+/** Un point du diagnostic du Mavic : état (ok / attention / bloquant), titre, explication. */
+class MavicCheck(val state: String, val title: String, val detail: String)
+
+class MavicReport(
+    val checks: List<MavicCheck>,
+    /** Alertes du drone : (raison, solution), en anglais. */
+    val messages: List<Pair<String, String>>,
+    /** Les mêmes, expliquées en français par l'IA (null sans clé ou sans alerte). */
+    val explained: String?,
+    val visionOn: Boolean?,
+    val noGpsAllowed: Boolean?,
+    val compassCal: String,
+)
+
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val prefs = app.getSharedPreferences("bebopia", Context.MODE_PRIVATE)
@@ -411,6 +425,63 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun clearWaypoints() {
         nav?.clearWaypoints() ?: prefs.edit().remove("waypoints").apply()
         sysMessage("📍 Points de la carte effacés.")
+    }
+
+    // ---- diagnostic du Mavic (ce qui empêche de décoller) et déblocages -----------------------------
+    private var explainedFor = ""
+    private var explainedText: String? = null
+
+    private fun <T> waitDji(block: ((T?, String?) -> Unit) -> Unit): Pair<T?, String?> {
+        val latch = java.util.concurrent.CountDownLatch(1)
+        var out: Pair<T?, String?> = null to "pas de réponse du drone"
+        block { v, e -> out = v to e; latch.countDown() }
+        latch.await(6, java.util.concurrent.TimeUnit.SECONDS)
+        return out
+    }
+
+    /** État du Mavic avant décollage. Bloquant (quelques secondes) : à appeler hors du thread de l'interface. */
+    fun mavicReport(): MavicReport? {
+        val l = djiOrNull ?: return null
+        if (mode != Mode.MAVIC) return null
+        val checks = l.checks().map { MavicCheck(it[0], it[1], it[2]) }
+        val msgs = l.djiMessages().map { it[0] to it[1] }
+        val visionOn = waitDji<Boolean> { k -> l.getVisionPositioning { v, e -> k(v, e) } }.first
+        val noGps = waitDji<Boolean> { k -> l.getTakeoffWithoutGpsAllowed { v, e -> k(v, e) } }.first
+        // Alertes du drone expliquées en français (une fois par liste d'alertes)
+        val key = msgs.joinToString("|") { it.first + it.second }
+        if (msgs.isNotEmpty() && key != explainedFor && geminiKey.isNotBlank()) {
+            explainedText = runCatching {
+                vision.text("Voici les alertes affichées par un drone DJI Mavic Mini (raison / solution, en anglais). " +
+                    "Explique chacune en français simple, pour un débutant, en une ou deux phrases : ce que ça veut dire et quoi faire " +
+                    "concrètement. Une ligne par alerte, sans titre.\n" + msgs.joinToString("\n") { "- " + it.first + " / " + it.second })
+            }.getOrNull()?.trim()
+            explainedFor = key
+        }
+        return MavicReport(checks, msgs, if (msgs.isEmpty()) null else explainedText, visionOn, noGps, l.compassCalibrationState())
+    }
+
+    /** Actions de déblocage. Bloquant : hors du thread de l'interface. Renvoie un message pour le pilote. */
+    fun mavicAction(kind: String): String {
+        val l = djiOrNull ?: return "Mavic non connecté"
+        if (drone?.flying == true && kind in setOf("compass", "imu", "reboot")) return "Impossible en vol : pose le drone d'abord."
+        fun done(ok: String, block: (DjiLink.Done) -> Unit): String {
+            val (_, err) = waitDji<Unit> { k -> block(DjiLink.Done { e -> k(Unit, e) }) }
+            return err?.let { "Refusé par le drone : $it" } ?: ok
+        }
+        val r = when (kind) {
+            "vision_on" -> done("Positionnement visuel (capteurs du dessous) activé.") { l.visionPositioning(true, it) }
+            "nogps_allow" -> done("Décollage sans GPS autorisé. Attention : sans GPS ni capteurs du dessous, le drone dérive (mode ATTI) — " +
+                "en intérieur, il faut que ses capteurs du dessous fonctionnent pour qu'il tienne en place.") { l.allowTakeoffWithoutGps(true, it) }
+            "nogps_lock" -> done("Décollage sans GPS de nouveau verrouillé.") { l.allowTakeoffWithoutGps(false, it) }
+            "compass" -> done("Étalonnage de la boussole lancé : loin de tout métal, tiens le drone à plat et tourne sur toi-même " +
+                "(un tour complet), puis nez vers le bas et refais un tour.") { l.compassCalibration(true, it) }
+            "compass_stop" -> done("Étalonnage de la boussole arrêté.") { l.compassCalibration(false, it) }
+            "imu" -> done("Étalonnage de la centrale inertielle lancé : drone posé bien à plat, ne le touche pas (5 à 10 min).") { l.imuCalibration(it) }
+            "reboot" -> done("Contrôleur de vol redémarré : attends 30 s que le drone se reconnecte.") { l.rebootFlightController(it) }
+            else -> "action inconnue"
+        }
+        sysMessage("🔧 $r")
+        return r
     }
 
     fun changeAutoRecord(on: Boolean) {
