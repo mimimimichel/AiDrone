@@ -56,6 +56,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.concurrent.thread
+import kotlin.math.abs
 
 enum class Mode { NONE, CONNECTING, BEBOP, MAVIC, SIM }
 
@@ -434,6 +435,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 delay(1000)
                 val d = drone ?: continue
                 runCatching { nav?.tick() }
+                if (questActive && System.currentTimeMillis() - questLastActive > 1000) questActive = false
                 // Nouveau vol : la mémoire de la scène repart de zéro
                 if (d.flying && !wasFlyingTick) scene?.clear()
                 wasFlyingTick = d.flying
@@ -1015,6 +1017,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             onMic = { pcm -> live?.feedMic(pcm) },
             onAudioClients = { n -> headsetAudio(n) },
             onTile = { z, x, y -> mapTiles.get(z, x, y) },
+            onSticks = { lx, ly, rx, ry -> questSticks(lx, ly, rx, ry) },
+            onButton = { b -> questButton(b) },
         )
         startPilotLocation()
         if (!h.start()) {
@@ -1176,6 +1180,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .put("nav", runCatching { nav?.mapJson() }.getOrNull() ?: org.json.JSONObject.NULL)
             .put("activity", clean(s.activity))
             .put("rec", s.recording)
+            .put("sticks", questActive)
             .put("indoor", s.indoor)
             .put("scene", runCatching { scene?.mapJson() }.getOrNull() ?: org.json.JSONObject.NULL)
             .put("moveArrow", runCatching {
@@ -1198,6 +1203,76 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .put("chat", chat)
             .put("top", listOf(s.mode.name, s.battery?.let { "$it %" } ?: "").joinToString(" "))
             .toString()
+    }
+
+    // ---- pilotage aux manettes du casque (mode 2 : gauche = gaz + rotation, droite = avant/arrière + côtés) ----
+    @Volatile private var questActive = false
+    @Volatile private var questLastActive = 0L
+    @Volatile private var questButtonAt = 0L
+
+    private fun expo(v: Double): Double {
+        val a = abs(v)
+        if (a < 0.12) return 0.0
+        val k = (a - 0.12) / 0.88
+        return Math.signum(v) * k * k * 0.6 + Math.signum(v) * k * 0.4 // doux au centre, plein au bout
+    }
+
+    private fun questSticks(lx: Double, ly: Double, rx: Double, ry: Double) {
+        val d = drone ?: return
+        val now = System.currentTimeMillis()
+        val any = maxOf(abs(lx), abs(ly), abs(rx), abs(ry)) > 0.12
+        if (!any) {
+            if (questActive && now - questLastActive > 250) { questActive = false; d.stopVelocity() }
+            return
+        }
+        questLastActive = now
+        if (!d.supportsSticks) {
+            if (!questActive) sysMessage("🎮 Pilotage aux manettes indisponible avec ce drone (simulation).")
+            questActive = true
+            return
+        }
+        if (!questActive) {
+            questActive = true
+            // Le pilote prend la main : l'IA s'arrête, l'action en cours aussi.
+            thread(isDaemon = true) {
+                runCatching { d.cancelMove() }
+                agent?.let { if (!it.paused) it.pilotTakeover("les manettes du casque") }
+                refresh()
+            }
+        }
+        if (!d.flying) return
+        val vh = if (d.indoor) 0.5 else if (d.hasGps) 4.0 else 1.0
+        var f = -expo(ry) * vh
+        var r = expo(rx) * vh
+        var u = -expo(ly) * (if (d.indoor) 0.4 else 1.5)
+        val yaw = expo(lx) * (if (d.indoor) 40.0 else 70.0)
+        // Plafond, rayon, murs repérés : on bloque ce qui y mènerait
+        val top = if (d.indoor) (d.space?.ceilingAlt()?.minus(0.5) ?: 2.0) else limits.maxAltitudeM
+        if (u > 0 && d.altitude() >= top - 0.1) u = 0.0
+        if (u < 0 && d.altitude() <= limits.minAltitudeM) u = 0.0
+        if (f != 0.0 || r != 0.0) {
+            val bearing = d.lookHeading() + Math.toDegrees(kotlin.math.atan2(r, f))
+            val p = d.positionNE()
+            val dist = kotlin.math.hypot(p.first, p.second)
+            if (dist > limits.maxDistanceM - 1) {
+                // Au bord du rayon : seulement vers le départ
+                val home = Math.toDegrees(kotlin.math.atan2(-p.second, -p.first))
+                if (abs(com.bebopia.app.core.norm180(bearing - home)) > 80) { f = 0.0; r = 0.0 }
+            }
+            d.space?.allowed(bearing, p)?.let { free -> if (free < 0.3) { f = 0.0; r = 0.0 } }
+        }
+        runCatching { d.sticks(f, r, u, yaw) }
+    }
+
+    private fun questButton(b: String) {
+        val now = System.currentTimeMillis()
+        if (now - questButtonAt < 2000) return
+        questButtonAt = now
+        val a = agent ?: return
+        when (b) {
+            "takeoff" -> { sysMessage("🎮 Décollage demandé aux manettes."); a.humanTakeoff() }
+            "land" -> { sysMessage("🎮 Atterrissage demandé aux manettes."); a.humanLand() }
+        }
     }
 
     // ---- reprise en main avec la radiocommande -----------------------------------------------

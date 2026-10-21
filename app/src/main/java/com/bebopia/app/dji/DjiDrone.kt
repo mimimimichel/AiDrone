@@ -220,6 +220,19 @@ class DjiDrone(
         }
     }
 
+    @Volatile private var stickFollow = false
+
+    /** Manettes : la rotation au manche tourne le « devant » ; la tête garde son effet (le drone suit toujours la tête). */
+    override fun sticks(forward: Double, right: Double, up: Double, yawRate: Double) {
+        var yr = yawRate
+        if (following()) {
+            if (abs(yawRate) > 1) droneYawCenter = com.bebopia.app.core.norm180(droneYawCenter!! + yawRate * 0.05)
+            yr = followRate(droneYawCenter!!)
+            stickFollow = true
+        }
+        velocity(forward, right, up, yr, holdMs = 300)
+    }
+
     override fun stopVelocity() {
         if (velUntil != 0L) velUntil = 1L
     }
@@ -238,8 +251,11 @@ class DjiDrone(
                 setForward(false)
                 if (!manual) repeat(8) { link.sendSticks(0f, 0f, 0f, 0f); Thread.sleep(100) }
                 moving = false
-                droneYawCenter = link.heading()
-                headYawCenter = headYaw
+                if (!stickFollow) {
+                    droneYawCenter = link.heading()
+                    headYawCenter = headYaw
+                }
+                stickFollow = false
                 continue
             }
             val v = vel

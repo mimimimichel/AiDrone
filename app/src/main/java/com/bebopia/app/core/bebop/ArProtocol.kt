@@ -123,6 +123,9 @@ object BebopCmd {
     fun moveBy(dx: Float, dy: Float, dz: Float, dPsi: Float) =
         cmd(1, 0, 7, ArArgs().f32(dx).f32(dy).f32(dz).f32(dPsi))
     fun cancelMoveBy() = cmd(1, 0, 14)
+    /** Pilotage aux manches : flag (1 = roulis/tangage actifs), roulis, tangage, lacet, gaz en % (-100 à 100). */
+    fun pcmd(flag: Int, roll: Int, pitch: Int, yaw: Int, gaz: Int, seq: Int) =
+        cmd(1, 0, 2, ArArgs().u8(flag).u8(roll).u8(pitch).u8(yaw).u8(gaz).i32(seq))
 
     // ardrone3.Camera
     fun cameraOrientation(tilt: Float, pan: Float) = cmd(1, 1, 1, ArArgs().f32(tilt).f32(pan))

@@ -28,6 +28,10 @@ class HeadsetStream(
     private val state: () -> String,
     /** Orientation de la tête (pitch, yaw en degrés), suivi de la tête par le drone, recentrage. */
     private val onHead: (pitch: Double, yaw: Double, follow: Boolean, recenter: Boolean) -> Unit = { _, _, _, _ -> },
+    /** Manettes du casque : manche gauche (x, y) et droit (x, y), de -1 à 1 (y vers le haut = négatif). */
+    private val onSticks: (lx: Double, ly: Double, rx: Double, ry: Double) -> Unit = { _, _, _, _ -> },
+    /** Boutons tenus : « takeoff » (A) ou « land » (B). */
+    private val onButton: (String) -> Unit = {},
     /** Pour l'adresse sécurisée (https), obligatoire pour la réalité virtuelle dans le navigateur du casque. */
     private val tls: javax.net.ssl.SSLServerSocketFactory? = null,
     private val port: Int = 8080,
@@ -198,6 +202,9 @@ class HeadsetStream(
                 val p = q["p"]?.toDoubleOrNull()
                 val y = q["y"]?.toDoubleOrNull()
                 if (p != null && y != null) onHead(p, y, q["f"] == "1", q["c"] == "1")
+                val lx = q["lx"]?.toDoubleOrNull()
+                if (lx != null) onSticks(lx, q["ly"]?.toDoubleOrNull() ?: 0.0, q["rx"]?.toDoubleOrNull() ?: 0.0, q["ry"]?.toDoubleOrNull() ?: 0.0)
+                q["bt"]?.let { onButton(it) }
                 send(out, "application/json; charset=utf-8", state().toByteArray())
             }
             path.startsWith("/tile") -> {
@@ -422,7 +429,7 @@ function draw(){
   panel(8,H-132,W-16,124);
   t('🥽 Tête → nacelle',28,H-86,24,HUD,'left',true);
   t('↻ Rotation du drone : '+(follow?'MARCHE':'ARRÊT'),28,H-46,24,follow?HUD:GREY,'left',true);
-  t('Grip : rotation marche/arrêt   ·   Gâchette : recentrer',W/2,H-86,22,'#fff','center');
+  t('Manches : gauche gaz/rotation, droite avant/côtés  ·  A tenu : décoller  ·  B tenu : atterrir  ·  Grip : rotation  ·  Gâchette : recentrer',W/2,H-86,18,'#fff','center');
   t('Dis « stop » ou « atterris » à tout moment',W/2,H-46,22,WARN,'center');
   t(audioOn?'🎙 Audio dans le casque':'🎙 Audio sur le téléphone',W-28,H-86,22,audioOn?HUD:GREY,'right',true);
   t((s.voice||'').replace(/^[^ ]+ /,'')||'Conversation fermée',W-28,H-46,22,GREY,'right');
@@ -802,6 +809,19 @@ function drawOSD(){
   {const d=num(tel.homeDist,num(s.dist,0)), rad=Math.max(1,num(s.radius,15)), k=Math.min(1,d/rad);
     tx('RAYON',470,py+160,15,'rgba(189,244,255,.7)','left',700,4);o.fillStyle='rgba(189,244,255,.15)';o.fillRect(470,py+172,90,6);
     o.fillStyle=k>0.9?DNG:ACC;o.fillRect(470,py+172,90*k,6);}
+  // ---- Manettes : les deux manches, et l'anneau quand A / B sont tenus ----
+  if(pad.active||s.sticks){const by2=cy+R-30;
+    for(const [ox,sx,sy,lb] of [[-R-130,pad.lx,pad.ly,'GAZ · ROTATION'],[R+130,pad.rx,pad.ry,'AVANT · CÔTÉS']]){
+      o.strokeStyle='rgba(189,244,255,.6)';o.lineWidth=2;o.beginPath();o.arc(cx+ox,by2,34,0,Math.PI*2);o.stroke();
+      ln(cx+ox-34,by2,cx+ox+34,by2,'rgba(189,244,255,.2)',1);ln(cx+ox,by2-34,cx+ox,by2+34,'rgba(189,244,255,.2)',1);
+      o.fillStyle=ACC;o.beginPath();o.arc(cx+ox+sx*30,by2+sy*30,8,0,Math.PI*2);o.fill();
+      tx(lb,cx+ox,by2+58,12,'rgba(189,244,255,.7)','center',700,3);}
+    tx('◉ MANETTES',cx-R-130,by2-48,15,ACC,'center',700,4);}
+  for(const [hold,lb,col] of [[pad.holdA,'DÉCOLLAGE',ACC],[pad.holdB,'ATTERRISSAGE',AMB]]){if(!hold)continue;
+    const k=Math.min(1,(performance.now()-hold)/1500);o.lineWidth=8;o.strokeStyle='rgba(189,244,255,.2)';o.beginPath();o.arc(cx,cy,R+40,0,Math.PI*2);o.stroke();
+    o.strokeStyle=col;o.beginPath();o.arc(cx,cy,R+40,-Math.PI/2,-Math.PI/2+k*Math.PI*2);o.stroke();o.lineWidth=2;
+    tx(k<1?lb+' · MAINTIENS':lb+' ✓',cx,cy+R+82,22,col,'center',700,5);}
+
   // ---- Égaliseur de la voix de l'IA (coin haut gauche) ----
   {const ex=110, ey=220, n=24, lv=voiceLevels(n,s), act=voiceActive(s);
     tx(act?'IA · PARLE':'IA · VOIX',ex,ey,15,act?ACC:'rgba(189,244,255,.55)','left',700,4);
@@ -860,6 +880,7 @@ if(!window.isSecureContext){
 vrBtn.onclick=()=>{startAudio();startVR();};
 document.getElementById('talk').onclick=startAudio;
 let recenter=true, lastHead=0;
+const pad={lx:0,ly:0,rx:0,ry:0,active:false,holdA:0,holdB:0,sentA:false,sentB:false};
 
 async function startVR(){
   const canvas=document.getElementById('gl');
@@ -889,14 +910,27 @@ async function startVR(){
   let uploaded=false;
   function onFrame(tm,fr){
     session.requestAnimationFrame(onFrame);
-    for(const src of session.inputSources){const gp=src.gamepad;if(!gp||gp.axes.length<4)continue;const ay=gp.axes[3];
-      if(Math.abs(ay)>0.5){size=Math.max(0.6,Math.min(1.5,size-ay*0.01));setQuad();}}
+    // Manettes (mode 2) : gauche = monter/descendre + rotation ; droite = avancer/reculer + côtés.
+    // A tenu 1,5 s = décoller, B tenu = atterrir ; X / Y (main gauche) = image plus petite / plus grande.
+    pad.lx=0;pad.ly=0;pad.rx=0;pad.ry=0;let a=false,b=false;
+    for(const src of session.inputSources){const gp=src.gamepad;if(!gp||gp.axes.length<4)continue;
+      const x=gp.axes[2]||0, y=gp.axes[3]||0, b4=gp.buttons[4]&&gp.buttons[4].pressed, b5=gp.buttons[5]&&gp.buttons[5].pressed;
+      if(src.handedness==='left'){pad.lx=x;pad.ly=y;
+        if(b4){size=Math.max(0.6,size-0.01);setQuad();} if(b5){size=Math.min(1.5,size+0.01);setQuad();}}
+      else{pad.rx=x;pad.ry=y;a=b4;b=b5;}}
+    pad.active=Math.max(Math.abs(pad.lx),Math.abs(pad.ly),Math.abs(pad.rx),Math.abs(pad.ry))>0.12;
+    pad.holdA=a?(pad.holdA||tm):0;pad.holdB=b?(pad.holdB||tm):0;
+    let bt='';
+    if(pad.holdA&&tm-pad.holdA>1500&&!pad.sentA){bt='takeoff';pad.sentA=true;} if(!a)pad.sentA=false;
+    if(pad.holdB&&tm-pad.holdB>1500&&!pad.sentB){bt='land';pad.sentB=true;} if(!b)pad.sentB=false;
+    if(pad.active||pad.holdA||pad.holdB)dirty=true;
     const pose=fr.getViewerPose(ref);if(!pose)return;
     const q=pose.transform.orientation;
     const fx=-2*(q.x*q.z+q.w*q.y), fy=-2*(q.y*q.z-q.w*q.x), fz=-(1-2*(q.x*q.x+q.y*q.y));
     const yaw=Math.atan2(fx,-fz)*180/Math.PI, pitch=Math.asin(Math.max(-1,Math.min(1,fy)))*180/Math.PI;
     if(tm-lastHead>50){lastHead=tm;
-      fetch('/head?p='+pitch.toFixed(1)+'&y='+yaw.toFixed(1)+'&f='+(follow?1:0)+'&c='+(recenter?1:0),{cache:'no-store'})
+      fetch('/head?p='+pitch.toFixed(1)+'&y='+yaw.toFixed(1)+'&f='+(follow?1:0)+'&c='+(recenter?1:0)+
+        '&lx='+pad.lx.toFixed(2)+'&ly='+pad.ly.toFixed(2)+'&rx='+pad.rx.toFixed(2)+'&ry='+pad.ry.toFixed(2)+(bt?'&bt='+bt:''),{cache:'no-store'})
         .then(r=>r.json()).then(s=>{state=s;dirty=true;}).catch(()=>{});
       recenter=false;}
     if(voiceActive(state)||state.obstacle||audioOn||(state.marks&&state.marks.length))dirty=true;

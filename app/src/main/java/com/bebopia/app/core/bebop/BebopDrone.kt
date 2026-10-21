@@ -110,6 +110,41 @@ class BebopDrone(
         }
     }
 
+    // ---- manettes du casque : commandes « manches » natives du Bebop, envoyées 25 fois par seconde ----
+    override val supportsSticks: Boolean get() = true
+    @Volatile private var pcmd = IntArray(4)
+    @Volatile private var pcmdUntil = 0L
+    private var pcmdLoop: Thread? = null
+
+    override fun sticks(forward: Double, right: Double, up: Double, yawRate: Double) {
+        // Le Bebop se commande en % de son inclinaison et de ses vitesses maximales
+        fun pct(v: Double, max: Double) = (v / max * 100).toInt().coerceIn(-100, 100)
+        val f = if (forwardBlocked()) minOf(forward, 0.0) else forward
+        pcmd = intArrayOf(pct(right, 6.0), pct(f, 6.0), pct(yawRate, 100.0), pct(up, 1.5))
+        pcmdUntil = System.currentTimeMillis() + 300
+        setForward(f > 0.2)
+        synchronized(this) {
+            if (pcmdLoop == null) pcmdLoop = Thread({
+                var seq = 0
+                var sending = false
+                while (true) {
+                    Thread.sleep(40)
+                    if (System.currentTimeMillis() < pcmdUntil) {
+                        val c = pcmd
+                        net.send(BebopCmd.pcmd(1, c[0], c[1], c[2], c[3], seq++))
+                        sending = true
+                    } else if (sending) {
+                        repeat(3) { net.send(BebopCmd.pcmd(0, 0, 0, 0, 0, seq++)); Thread.sleep(40) }
+                        setForward(false)
+                        sending = false
+                    }
+                }
+            }, "manettes").apply { isDaemon = true; start() }
+        }
+    }
+
+    override fun stopVelocity() { pcmdUntil = 0L }
+
     @Volatile private var headSentAt = 0L
 
     /** Caméra du Bebop : inclinaison et pivot numériques, qui suivent la tête. */

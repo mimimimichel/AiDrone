@@ -299,13 +299,13 @@ class Agent(
     var onHandBack: (() -> Unit)? = null
 
     /** Le pilote reprend la main avec la radiocommande. */
-    fun pilotTakeover() {
+    fun pilotTakeover(with: String = "la radiocommande") {
         paused = true
         pending = null
         lastText = "Le pilote a la main"
-        system("🕹 Tu as repris la main avec la radiocommande : l'IA est en pause. Touche ▶ IA ou dis « à toi » pour lui rendre les commandes.")
+        system("🕹 Tu as repris la main avec $with : l'IA est en pause. Touche ▶ IA ou dis « à toi » pour lui rendre les commandes.")
         speak("D'accord, tu as la main.")
-        onEvent?.invoke("Le pilote a repris les commandes avec sa radiocommande : tu es en pause, ne bouge plus.", false)
+        onEvent?.invoke("Le pilote a repris les commandes avec $with : tu es en pause, ne bouge plus.", false)
     }
 
     private fun yesNo(text: String): Boolean {

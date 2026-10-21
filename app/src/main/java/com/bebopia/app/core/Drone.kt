@@ -189,6 +189,17 @@ abstract class DroneBase(val limits: Limits) {
     /** Arrête toute vitesse continue. */
     open fun stopVelocity() {}
 
+    /** Le drone se pilote aux manettes du casque (vitesses continues). */
+    open val supportsSticks: Boolean get() = supportsVelocity
+
+    /**
+     * Manettes du casque : vitesses voulues (m/s, °/s, repère de la vue), renouvelées ~20 fois par seconde.
+     * Si plus rien n'arrive pendant 0,3 s, le drone s'arrête et reste sur place.
+     */
+    open fun sticks(forward: Double, right: Double, up: Double, yawRate: Double) {
+        if (supportsVelocity) velocity(forward, right, up, yawRate, holdMs = 300)
+    }
+
     /** Avance bloquée (obstacle vu il y a moins de 5 s). */
     fun forwardBlocked(): Boolean = System.currentTimeMillis() < obstacleUntil
 
