@@ -71,11 +71,15 @@ class ObstacleGuard(
                 Thread.sleep(60)
                 continue
             }
+            // En intérieur on va lentement : on ne s'arrête que pour ce qui est vraiment proche
+            detector.ttcLimitS = if (drone.indoor) 1.6 else 2.0
             val r = detector.update(g, System.currentTimeMillis())
             lastTtcS = r.ttcS
-            if (r.danger) {
+            val moving = drone.movingForward
+            // À l'arrêt, le drone qui dérive ou tourne fait « grossir » le décor : on n'alerte que si c'est tout proche
+            val alert = r.danger && (moving || (r.ttcS ?: 99.0) < 0.9)
+            if (alert) {
                 val ttc = r.ttcS ?: 0.0
-                val moving = drone.movingForward
                 val now = System.currentTimeMillis()
                 if (moving) {
                     log("obstacle : contact estimé dans %.1f s, arrêt".format(ttc))
@@ -84,8 +88,8 @@ class ObstacleGuard(
                     lastAlert = now
                 } else {
                     drone.obstacleAhead()
-                    // Une alerte toutes les 5 s au plus
-                    if (now - lastAlert > 5000) {
+                    // Une alerte toutes les 10 s au plus
+                    if (now - lastAlert > 10_000) {
                         lastAlert = now
                         onObstacle(ttc, false)
                     }

@@ -221,9 +221,10 @@ class LoomingDetector(
         }
         val w = frame.w
         val h = frame.h
-        // Zone devant le drone : centre de l'image, sans le bas (le sol qui défile ferait de fausses alertes).
-        val x0 = (w * 0.28).toInt(); val x1 = (w * 0.72).toInt()
-        val y0 = (h * 0.12).toInt(); val y1 = (h * 0.78).toInt()
+        // Zone devant le drone : le cœur de l'image, là où il va. Les bords (cadres de porte, meubles sur le côté)
+        // grossissent aussi quand on avance mais ne sont pas sur le trajet. Sans le bas (le sol qui défile).
+        val x0 = (w * 0.33).toInt(); val x1 = (w * 0.67).toInt()
+        val y0 = (h * 0.15).toInt(); val y1 = (h * 0.75).toInt()
         val step = maxOf(4, w / 32)
         val from = Tracker.pickPoints(p[0], x0, y0, x1, y1, step, minScore = 6f)
         val a = ArrayList<FloatArray>()
@@ -243,17 +244,15 @@ class LoomingDetector(
             used = maxOf(used, r.second)
         }
         consider(a.indices.toList(), 10)
-        // Bandes verticales (poteau, arbre, personne) et horizontales (branche, fil, bord de table)
-        val bw = (x1 - x0) / 4f
-        val bh = (y1 - y0) / 3f
-        for (c in 0 until 4) consider(a.indices.filter { ((a[it][0] - x0) / bw).toInt() == c }, 7)
-        for (r in 0 until 3) consider(a.indices.filter { ((a[it][1] - y0) / bh).toInt() == r }, 7)
-        // Lissage : une seule image ne suffit pas à déclencher.
+        // Trois bandes verticales dans le cœur (poteau, personne, pied de table droit devant), assez de points chacune
+        val bw = (x1 - x0) / 3f
+        for (c in 0 until 3) consider(a.indices.filter { ((a[it][0] - x0) / bw).toInt() == c }, 9)
+        // Lissage : il faut que ça dure (3 images de suite, ~0,25 s) pour déclencher.
         rate = 0.5 * rate + 0.5 * best
         val ttc = if (rate > 1e-3) 1.0 / rate else null
         val danger = ttc != null && ttc < ttcLimitS
         dangerFrames = if (danger) dangerFrames + 1 else 0
-        return Result(ttc, dangerFrames >= 2, used)
+        return Result(ttc, dangerFrames >= 3, used)
     }
 
     companion object {

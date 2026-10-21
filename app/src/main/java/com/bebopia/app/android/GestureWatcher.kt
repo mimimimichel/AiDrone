@@ -24,12 +24,14 @@ class GestureWatcher(private val context: Context) {
         if (hands == null) hands = make { d ->
             GestureRecognizer.createFromOptions(context, GestureRecognizer.GestureRecognizerOptions.builder()
                 .setBaseOptions(BaseOptions.builder().setModelAssetPath("gesture_recognizer.task").setDelegate(d).build())
-                .setRunningMode(RunningMode.IMAGE).setNumHands(2).build())
+                .setRunningMode(RunningMode.IMAGE).setNumHands(2)
+                .setMinHandDetectionConfidence(0.7f).setMinHandPresenceConfidence(0.7f).build())
         }
         if (pose == null) pose = make { d ->
             PoseLandmarker.createFromOptions(context, PoseLandmarker.PoseLandmarkerOptions.builder()
                 .setBaseOptions(BaseOptions.builder().setModelAssetPath("pose_landmarker_lite.task").setDelegate(d).build())
-                .setRunningMode(RunningMode.IMAGE).setNumPoses(1).build())
+                .setRunningMode(RunningMode.IMAGE).setNumPoses(1)
+                .setMinPoseDetectionConfidence(0.7f).setMinPosePresenceConfidence(0.7f).build())
         }
         if (hands == null && pose == null) failed = true
         return !failed
@@ -40,12 +42,22 @@ class GestureWatcher(private val context: Context) {
     fun analyze(bmp: Bitmap): Pair<String?, List<FloatArray>?> {
         if (!ready()) return null to null
         val img = BitmapImageBuilder(bmp).build()
-        val hand = runCatching {
-            hands?.recognize(img)?.gestures()?.flatten()?.filter { it.score() > 0.6f && it.categoryName() != "None" }
-                ?.maxByOrNull { it.score() }?.categoryName()
-        }.getOrNull()
         val body = runCatching {
             pose?.detect(img)?.landmarks()?.firstOrNull()?.map { l -> floatArrayOf(l.x(), l.y(), l.visibility().orElse(1f)) }
+        }.getOrNull()
+        // Une main seule, dans un décor encombré, est souvent une fausse détection : on ne la croit que si
+        // une personne est visible, ou si la main est grande dans l'image (tendue près de la caméra).
+        val hand = runCatching {
+            val r = hands?.recognize(img) ?: return@runCatching null
+            val personSeen = body != null && com.bebopia.app.core.vision.GestureInterpreter.personVisible(body)
+            r.gestures().indices.mapNotNull { i ->
+                val g = r.gestures()[i].maxByOrNull { it.score() } ?: return@mapNotNull null
+                if (g.score() < 0.8f || g.categoryName() == "None") return@mapNotNull null
+                val lm = r.landmarks().getOrNull(i) ?: return@mapNotNull null
+                val span = maxOf(lm.maxOf { it.x() } - lm.minOf { it.x() }, lm.maxOf { it.y() } - lm.minOf { it.y() })
+                if (!personSeen && span < 0.18f) return@mapNotNull null
+                g
+            }.maxByOrNull { it.score() }?.categoryName()
         }.getOrNull()
         return hand to body
     }

@@ -331,13 +331,13 @@ abstract class DroneBase(val limits: Limits) {
 
     /** Obstacle vu alors que le drone n'avance pas : on bloque seulement l'avance quelques secondes. */
     fun obstacleAhead() {
-        obstacleUntil = System.currentTimeMillis() + 5000
+        obstacleUntil = System.currentTimeMillis() + 2500
     }
 
     /** Appelé par le détecteur d'obstacles : arrête le déplacement et bloque l'avance quelques secondes. */
     fun stopForObstacle() {
         cancelReason = "interrompu : obstacle détecté devant"
-        obstacleUntil = System.currentTimeMillis() + 5000
+        obstacleUntil = System.currentTimeMillis() + 3000
         doCancelMove()
     }
 

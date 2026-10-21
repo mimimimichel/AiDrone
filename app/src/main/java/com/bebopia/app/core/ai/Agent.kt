@@ -50,6 +50,26 @@ class Agent(
             "mastershots", "hyperlapse", "goto_point", "come_back", "follow", "spotlight", "retrace")
 
         val STOP_WORDS = setOf("stop", "stoppe", "arrete", "arretes", "arretez", "pause", "halte", "stopper")
+
+        /**
+         * Ordre de sécurité dans une phrase dite au drone : "land_now", "land", "pause", "stop", ou null.
+         * Seulement les ordres COURTS (« stop », « arrête-toi », « pose-toi ») : un mot dans une longue phrase
+         * (« si tu vois un mur tu t'arrêtes ») ou une négation (« ne t'arrête pas ») ne compte pas.
+         * En conversation en direct, « pose-toi » sans urgence est laissé à l'IA (elle choisit où se poser).
+         */
+        fun urgentWordsAction(text: String, live: Boolean): String? {
+            val norm = normalize(text)
+            val words = norm.split(Regex("[ '\\-]+")).filter { it.isNotBlank() }
+            if (words.isEmpty()) return null
+            val negated = words.any { it == "pas" || it == "jamais" || it == "ne" || it == "n" }
+            if (negated) return null
+            if (LAND_PHRASES.any { norm.contains(it) } && words.size <= 7) {
+                val urgent = listOf("tout de suite", "immediatement", "urgence", "vite").any { norm.contains(it) }
+                return if (urgent) "land_now" else if (live) null else "land"
+            }
+            if (words.size <= 4 && words.any { it in STOP_WORDS }) return if ("pause" in words) "pause" else "stop"
+            return null
+        }
         val LAND_PHRASES = listOf("atterri", "pose toi", "pose-toi", "pose le drone")
         val YES_WORDS = setOf("oui", "ok", "okay", "go", "valide", "confirme", "d'accord", "vas-y", "vasy", "ouais")
         val NO_WORDS = setOf("non", "annule", "annuler", "refuse")
@@ -296,19 +316,15 @@ class Agent(
      */
     private fun safetyWords(text: String): Boolean = urgentWords(text) || yesNo(text)
 
-    private fun urgentWords(text: String): Boolean {
-        val norm = normalize(text)
-        val words = norm.split(' ').filter { it.isNotBlank() }.toSet()
-        if (LAND_PHRASES.any { norm.contains(it) }) {
-            humanLand(now = listOf("tout de suite", "immediatement", "maintenant", "vite", "ici").any { norm.contains(it) })
-            return true
+    private fun urgentWords(text: String): Boolean = urgentWordsAction(text, live)?.let { act ->
+        when (act) {
+            "land_now" -> humanLand(now = true)
+            "land" -> humanLand()
+            "pause" -> stopNow(pauseAi = true)
+            else -> stopNow()
         }
-        if (words.any { it in STOP_WORDS }) {
-            stopNow()
-            return true
-        }
-        return false
-    }
+        true
+    } ?: false
 
     /** « mode confiance » / « mode prudent » à la voix (ou écrit) : changé par l'application. */
     var onTrust: ((Boolean) -> Unit)? = null
@@ -558,14 +574,20 @@ class Agent(
         )
     }
 
-    fun stopNow() {
+    /**
+     * « Stop » : l'action en cours s'arrête, le drone reste sur place. En conversation en direct, l'IA reste active
+     * (elle attend la suite) ; [pauseAi] (le mot « pause », le bouton) la met en pause.
+     */
+    fun stopNow(pauseAi: Boolean = !live) {
         lander?.abort = true
-        paused = true
+        if (pauseAi) paused = true
         pending = null
-        lastText = "Stop : IA en pause"
+        lastText = if (pauseAi) "Stop : IA en pause" else "Stop : action arrêtée"
         system(lastText)
-        speak("Je m'arrête et je reste sur place.")
-        thread(isDaemon = true) { runCatching { drone.cancelMove() } }
+        if (!live) speak("Je m'arrête et je reste sur place.")
+        thread(isDaemon = true) { runCatching { drone.cancelMove(); drone.stopVelocity() } }
+        onEvent?.invoke(if (pauseAi) "Le pilote t'a mis en pause : ne bouge plus."
+            else "Le pilote a dit stop : l'action en cours est arrêtée, le drone reste sur place. Ne bouge plus tant qu'il ne te redemande rien.", false)
     }
 
     /** Atterrissage soigné en intérieur (choisir l'endroit, descente recalée à l'image). */
@@ -638,7 +660,7 @@ class Agent(
             speak("Obstacle devant moi, je me suis arrêté.")
         } else {
             lastText = "Attention : quelque chose approche"
-            system("Détecteur d'obstacles : quelque chose approche devant (contact estimé dans %.1f s). Avance bloquée 5 s.".format(ttcS))
+            system("Détecteur d'obstacles : quelque chose tout près devant (contact estimé dans %.1f s). Avance bloquée 3 s.".format(ttcS))
             synchronized(history) { history.add("le détecteur d'obstacles a vu quelque chose approcher devant") }
             speak("Attention, quelque chose approche devant moi.")
         }

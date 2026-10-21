@@ -29,26 +29,42 @@ class GesturesTest {
         assertEquals(Gesture.LAND, g.fromPose(crossed))
     }
 
+    /** Images toutes les 250 ms (comme dans l'application), de [from] à [to] inclus. */
+    private fun feed(g: GestureInterpreter, from: Long, to: Long, hand: String?, pose: List<FloatArray>?): Gesture? {
+        var t = from
+        var r: Gesture? = null
+        while (t <= to) { r = g.update(t, hand, pose) ?: r; t += 250 }
+        return r
+    }
+
     @Test fun mustBeHeldThenCooldown() {
         val g = GestureInterpreter()
-        assertNull(g.update(0, "Open_Palm", null))
-        assertNull(g.update(500, "Open_Palm", null))
-        assertEquals(Gesture.STOP, g.update(900, "Open_Palm", null))
+        assertNull(feed(g, 0, 1000, "Open_Palm", null))
+        assertEquals(Gesture.STOP, g.update(1250, "Open_Palm", null))
         // Pas de nouveau déclenchement pendant 4 s
-        assertNull(g.update(1500, "Victory", null))
-        assertNull(g.update(3000, "Victory", null))
-        assertNull(g.update(5000, "Victory", null))
-        assertEquals(Gesture.PHOTO, g.update(6100, "Victory", null))
+        assertNull(feed(g, 1500, 5000, "Victory", null))
+        assertEquals(Gesture.PHOTO, feed(g, 5250, 7000, "Victory", null))
+    }
+
+    @Test fun flickeringDetectionIsIgnored() {
+        // Fausse détection dans un décor : elle apparaît une image sur deux -> jamais tenue
+        val g = GestureInterpreter()
+        var t = 0L
+        repeat(40) { k -> assertNull(g.update(t, if (k % 2 == 0) "Open_Palm" else null, null)); t += 250 }
     }
 
     @Test fun briefGestureIsIgnored() {
         val g = GestureInterpreter()
-        assertNull(g.update(0, null, crossed))
-        assertNull(g.update(600, null, crossed))
-        assertNull(g.update(1200, null, down)) // relâché trop tôt
-        assertNull(g.update(1700, null, down))
-        assertNull(g.update(1800, null, crossed))
-        assertNull(g.update(2800, null, crossed))
-        assertEquals(Gesture.LAND, g.update(3400, null, crossed))
+        assertNull(feed(g, 0, 1500, null, crossed))
+        assertNull(feed(g, 1750, 2250, null, down)) // relâché trop tôt
+        assertNull(feed(g, 2500, 4250, null, crossed))
+        assertEquals(Gesture.LAND, feed(g, 4500, 4750, null, crossed))
+    }
+
+    @Test fun noPersonNoPoseGesture() {
+        // Squelette « halluciné » tout petit (pas une vraie personne) : ignoré
+        val tiny = pose(0.505f to 0.1f, 0.495f to 0.1f).map { it.copyOf() }
+        tiny[11][0] = 0.502f; tiny[12][0] = 0.498f
+        assertNull(GestureInterpreter().fromPose(tiny))
     }
 }
