@@ -326,6 +326,7 @@ class RoombaDrone(
     }
 
     override fun positionHoldWeak(): Boolean = false
+    override val reliableCompass: Boolean get() = true // cap mesuré par les roues
 
     override fun telemetry(): Map<String, Any?> = super.telemetry() + mapOf(
         "roomba_mode" to sensors?.modeName,

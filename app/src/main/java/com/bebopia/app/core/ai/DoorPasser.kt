@@ -69,7 +69,7 @@ class DoorPasser(
 
     private fun look(desc: String): Detection {
         checkStop()
-        Thread.sleep(if (simulation) 400 else 800)
+        Thread.sleep(if (simulation) 300 else 400)
         val jpeg = eyes.captureJpegBase64() ?: throw Stop("passage impossible : pas d'image de la caméra")
         val d = try {
             detector.find(jpeg, "$desc (porte ou passage OUVERT par lequel on peut passer : encadre l'ouverture libre)")

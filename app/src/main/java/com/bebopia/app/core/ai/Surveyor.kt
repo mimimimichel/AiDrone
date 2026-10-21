@@ -60,13 +60,18 @@ class Surveyor(
         }
     }
 
-    fun survey(target: String?, climbM: Double? = null, lookDown: Boolean = true): SurveyResult {
+    /**
+     * [arcDeg] : 360 = tour complet ; moins = simple coup d'œil devant (3 vues sur l'arc, par ex. 120° = -60°, 0°, +60°).
+     * [measure] : second passage 25 cm plus haut pour mesurer les distances (long : désactivé par défaut,
+     * les distances sont mesurées juste avant d'avancer).
+     */
+    fun survey(target: String?, climbM: Double? = null, lookDown: Boolean = true, arcDeg: Double = 360.0, measure: Boolean = false): SurveyResult {
         if (!drone.flying) return SurveyResult(null, null, null, "refusé : le drone est au sol, décolle d'abord", null)
         val wasPaused = drone.headPaused
         drone.headPaused = true
         val tilt0 = drone.cameraTilt.toDouble()
         return try {
-            run(target, climbM, lookDown)
+            run(target, climbM, lookDown, arcDeg.coerceIn(60.0, 360.0), measure)
         } catch (e: Stop) {
             SurveyResult(null, null, null, e.message ?: "repérage interrompu", null)
         } finally {
@@ -81,14 +86,66 @@ class Surveyor(
     }
 
     private fun capture(): String {
-        Thread.sleep(if (simulation) 400 else 900) // image nette après la rotation
+        Thread.sleep(if (simulation) 400 else 500) // image nette après la rotation
         var f = eyes.captureJpegBase64()
         var n = 0
         while (f == null && n++ < 5) { Thread.sleep(300); f = eyes.captureJpegBase64() }
         return f ?: throw Stop("repérage impossible : pas d'image de la caméra")
     }
 
-    private fun run(target: String?, climbM: Double?, lookDown: Boolean): SurveyResult {
+    /** Image tout de suite (pendant une rotation continue : pas d'attente). */
+    private fun captureNow(): String {
+        var f = eyes.captureJpegBase64()
+        var n = 0
+        while (f == null && n++ < 5) { Thread.sleep(150); f = eyes.captureJpegBase64() }
+        return f ?: throw Stop("repérage impossible : pas d'image de la caméra")
+    }
+
+    /**
+     * Rotation continue et fluide (une dizaine de secondes pour un tour) avec les images prises au vol, au lieu de
+     * s'arrêter à chaque vue : beaucoup plus court, donc beaucoup moins de dérive et de batterie.
+     * [startDeg] : d'où partir (par rapport au cap actuel) ; [count] vues espacées de [step]. [full] : finir le tour
+     * pour revenir face au point de départ. Renvoie false si le drone ne tourne pas (on repasse alors au pas à pas).
+     */
+    private fun sweep(startDeg: Double, count: Int, step: Double, full: Boolean, onView: (Int) -> Unit): Boolean {
+        drone.rotatingInPlace = true
+        try {
+            if (abs(startDeg) > 1) {
+                val r = drone.move(0.0, 0.0, 0.0, startDeg, maxStep = drone.limits.missionStepM)
+                if (r.startsWith("refusé") || r.startsWith("interrompu")) throw Stop("repérage arrêté : $r")
+                Thread.sleep(250)
+            }
+            val rate = if (drone.indoor) 36.0 else 45.0
+            var last = drone.compass()
+            var turned = 0.0
+            var next = 0
+            val t0 = System.currentTimeMillis()
+            val end = t0 + ((count * step + 20) / rate * 1000 + 8000).toLong()
+            onView(next++)
+            val goal = if (full) 360.0 - 6 else (count - 1) * step
+            while (System.currentTimeMillis() < end) {
+                checkStop()
+                drone.velocity(0.0, 0.0, 0.0, rate, holdMs = 450)
+                Thread.sleep(40)
+                val h = drone.compass()
+                turned += norm180(h - last)
+                last = h
+                if (System.currentTimeMillis() - t0 > 3000 && turned < 5) { drone.stopVelocity(); return false }
+                if (next < count && turned >= next * step - 1.5) onView(next++)
+                if (next >= count && turned >= goal) break
+            }
+            drone.stopVelocity()
+            Thread.sleep(400)
+            // Coup d'œil : revenir face à la direction de départ
+            if (!full) drone.move(0.0, 0.0, 0.0, -(startDeg + turned), maxStep = drone.limits.missionStepM)
+            return next >= count
+        } finally {
+            drone.stopVelocity()
+            drone.rotatingInPlace = false
+        }
+    }
+
+    private fun run(target: String?, climbM: Double?, lookDown: Boolean, arcDeg: Double, measure: Boolean): SurveyResult {
         // Dehors seulement : monter pour voir plus loin
         if (climbM != null && climbM > 0.3) {
             if (drone.indoor) report("🏠 En intérieur, je ne monte pas pour regarder : je reste à cette hauteur")
@@ -97,26 +154,46 @@ class Surveyor(
                 drone.move(0.0, 0.0, climbM, 0.0, maxStep = drone.limits.missionStepM)
             }
         }
-        val views = if (drone.indoor) 8 else 6
-        val step = 360.0 / views
-        report("👀 Repérage : je regarde tout autour (${views} vues)" + (target?.let { ", en cherchant « $it »" } ?: ""))
+        val full = arcDeg >= 359.0
+        val views = if (!full) 3 else if (drone.indoor) 8 else 6
+        val step = if (full) 360.0 / views else arcDeg / (views - 1)
+        val start = if (full) 0.0 else -arcDeg / 2
+        report((if (full) "👀 Repérage : un tour sur place (${views} vues)" else "👀 Coup d'œil autour (${arcDeg.roundToInt()}°)") +
+            (target?.let { ", en cherchant « $it »" } ?: ""))
         drone.tiltCamera(if (drone.indoor) 0.0 else -15.0)
         val pos = drone.positionNE()
         val jobs = ArrayList<Triple<Double, Future<ViewReport>, Int>>()
         val low = arrayOfNulls<Gray>(views)
-        for (i in 0 until views) {
-            checkStop()
-            val jpeg = capture()
+        fun view(i: Int, jpeg: String) {
             low[i] = frames?.grab()
             val heading = drone.lookHeading()
             jobs.add(Triple(heading, pool.submit<ViewReport> { analyzer.analyze(jpeg, target, false, hfovDeg) }, i))
-            if (simulation) report("(Simulation) Tourne le téléphone de ${step.roundToInt()}° vers la droite")
-            val r = drone.move(0.0, 0.0, 0.0, step, maxStep = drone.limits.missionStepM)
-            if (r.startsWith("refusé") || r.startsWith("interrompu")) throw Stop("repérage arrêté : $r")
         }
-        // Second tour, 25 cm plus haut (ou plus bas) : les distances se mesurent au décalage entre les deux images
+        // Drone qui sait se tourner en continu et connaît son cap (boussole) : un seul mouvement fluide
+        val swept = drone.supportsVelocity && drone.reliableCompass && !simulation &&
+            sweep(start, views, step, full) { i -> view(i, captureNow()) }
+        if (!swept) {
+            jobs.clear()
+            if (abs(start) > 1) drone.move(0.0, 0.0, 0.0, start, maxStep = drone.limits.missionStepM)
+            drone.rotatingInPlace = true
+            try {
+                for (i in 0 until views) {
+                    checkStop()
+                    view(i, capture())
+                    if (i == views - 1 && !full) break
+                    if (simulation) report("(Simulation) Tourne le téléphone de ${step.roundToInt()}° vers la droite")
+                    val r = drone.move(0.0, 0.0, 0.0, step, maxStep = drone.limits.missionStepM)
+                    if (r.startsWith("refusé") || r.startsWith("interrompu")) throw Stop("repérage arrêté : $r")
+                }
+                if (!full) drone.move(0.0, 0.0, 0.0, -(start + (views - 1) * step), maxStep = drone.limits.missionStepM)
+            } finally {
+                drone.rotatingInPlace = false
+            }
+        }
+        // Second tour, 25 cm plus haut (ou plus bas) : les distances se mesurent au décalage entre les deux images.
+        // Long : seulement sur demande (sinon les distances sont mesurées juste avant d'avancer).
         val depths = arrayOfNulls<DepthReading>(views)
-        val base = if (frames != null && !simulation) ranger?.baseline() else null
+        val base = if (measure && full && frames != null && !simulation) ranger?.baseline() else null
         if (base != null) {
             checkStop()
             report("📏 Deuxième tour, ${(kotlin.math.abs(base) * 100).roundToInt()} cm plus ${if (base > 0) "haut" else "bas"}, pour mesurer les distances")

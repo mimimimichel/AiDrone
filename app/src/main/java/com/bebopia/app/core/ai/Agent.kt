@@ -442,7 +442,7 @@ class Agent(
             system("Mode confiance : plan lancé directement (${steps.size} étapes). Dis « stop » à tout moment.")
             if (needsSurvey()) {
                 thread(isDaemon = true) {
-                    val r = execute(mapOf("type" to "survey"))
+                    val r = execute(mapOf("type" to "survey", "arc" to 120.0))
                     onEvent?.invoke("Repérage fait avant ton plan : $r. Adapte le plan si besoin, puis commence l'étape 1.", true)
                 }
                 return "plan validé automatiquement (mode confiance). L'application fait d'abord un repérage des lieux (environ 30 s) : " +
@@ -469,8 +469,8 @@ class Agent(
         if (needsSurvey()) {
             // Regarder avant d'agir : repérage complet avant la première étape
             thread(isDaemon = true) {
-                val r = execute(mapOf("type" to "survey"))
-                onEvent?.invoke("Le pilote a validé ton plan. L'application a d'abord repéré les lieux : $r. " +
+                val r = execute(mapOf("type" to "survey", "arc" to 120.0))
+                onEvent?.invoke("Le pilote a validé ton plan. L'application a d'abord jeté un coup d'œil autour : $r. " +
                     "Adapte ton plan si ce repérage change quelque chose (dis-le), puis commence l'étape 1 et appelle plan_progress.", true)
             }
             return
@@ -912,7 +912,9 @@ class Agent(
                 "tour" -> nav?.tour() ?: "refusé : navigation indisponible"
                 "retrace" -> nav?.retrace(action["land"] == true) ?: "refusé : navigation indisponible"
                 "survey" -> surveyor?.survey(action["target"]?.toString()?.takeIf { it.isNotBlank() },
-                    num(action, "climb_m").takeIf { it > 0 })?.text ?: "refusé : le repérage a besoin d'une clé Gemini"
+                    num(action, "climb_m").takeIf { it > 0 }, lookDown = action["look_down"] == true,
+                    arcDeg = num(action, "arc", 360.0), measure = action["measure"] == true)?.text
+                    ?: "refusé : le repérage a besoin d'une clé Gemini"
                 "pass_door" -> {
                     val want = action["door"]?.toString().orEmpty()
                     val here = drone.positionNE()

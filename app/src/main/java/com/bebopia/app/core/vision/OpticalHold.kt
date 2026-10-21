@@ -30,8 +30,16 @@ class OpticalHold(private val hfovDeg: Double) {
     private var lastT = 0L
     var lastPoints = 0
         private set
+    private var suspended = false
+
+    /**
+     * Le drone tourne sur place (repérage) : on garde l'image de référence. Quand il revient face au même décor,
+     * on mesure de combien il a glissé pendant le tour et on le ramène.
+     */
+    fun suspend() { if (refPyr != null) suspended = true }
 
     fun reset() {
+        suspended = false
         refPyr = null; prevPyr = null; refPts = emptyList(); curPts = emptyList()
         baseLat = 0.0; baseFwd = 0.0; lastLat = 0.0; lastFwd = 0.0; lastT = 0L; lastPoints = 0
     }
@@ -42,6 +50,21 @@ class OpticalHold(private val hfovDeg: Double) {
      */
     fun update(g: Gray, yawDeg: Double, pitchDeg: Double, tMs: Long): Command? {
         val pyr = g.pyramid(3)
+        var resumed = false
+        if (suspended) {
+            suspended = false
+            val r0 = refPyr
+            if (r0 != null && r0[0].w == g.w && r0[0].h == g.h && abs(pitchDeg - refPitch) <= 3 &&
+                abs(com.bebopia.app.core.norm180(yawDeg - refYaw)) <= 15) {
+                // De retour face à la référence : on suit directement de l'image d'avant le tour à celle-ci
+                prevPyr = r0
+                curPts = refPts.map { it }
+                lastT = 0L
+                resumed = true
+            } else {
+                reset()
+            }
+        }
         val ref = refPyr
         // Caméra inclinée d'un coup (tête, ordre) : la référence ne vaut plus rien
         if (ref == null || abs(pitchDeg - refPitch) > 3 || ref[0].w != g.w || ref[0].h != g.h) {
@@ -55,7 +78,8 @@ class OpticalHold(private val hfovDeg: Double) {
         val pairs = refPts.indices.mapNotNull { i -> curPts[i]?.let { refPts[i] to it } }
         lastPoints = pairs.size
         if (pairs.size < 6) {
-            rekey(pyr, g, yawDeg, pitchDeg, keepOffset = true)
+            // Après un tour, si on ne retrouve pas le décor, l'ancien écart ne veut plus rien dire
+            rekey(pyr, g, yawDeg, pitchDeg, keepOffset = !resumed)
             return null
         }
         val f = (g.w / 2.0) / tan(Math.toRadians(hfovDeg / 2))

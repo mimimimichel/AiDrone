@@ -491,7 +491,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         else "🌳 Extérieur : déplacements normaux.")
                     live?.takeIf { it.active }?.event(
                         if (indoorNow) "Tu es en INTÉRIEUR : petits pas (30 cm max, l'application limite), jamais monter pour regarder, " +
-                            "repère les lieux (survey) avant de planifier, passe les portes avec pass_door."
+                            "si la porte ou l'objet est visible agis directement, sinon un repérage (survey) ; passe les portes avec pass_door."
                         else "Tu es en EXTÉRIEUR.", false)
                 }
                 runCatching { flightLog?.tick() }
@@ -650,16 +650,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val hold = com.bebopia.app.core.vision.OpticalHold(72.0)
             var idleSince = 0L
             var announced = false
+            var suspended = false
             while (isActive && drone === d) {
                 delay(140)
                 val now = System.currentTimeMillis()
                 val want = opticalHoldOn && d.positionHoldWeak() && d.idleForHold
+                if (!want && opticalHoldOn && d.positionHoldWeak() && d.rotatingInPlace) {
+                    // Rotation sur place : on garde la référence pour le ramener à sa place après le tour
+                    if (!suspended) { d.clearHold(); hold.suspend(); suspended = true; holdActive = false }
+                    idleSince = 0L
+                    continue
+                }
                 if (!want) {
+                    suspended = false
                     if (holdActive || d.holdAssist != null) { d.clearHold(); hold.reset(); holdActive = false }
                     idleSince = 0L
                     continue
                 }
-                if (idleSince == 0L) { idleSince = now; hold.reset(); continue }
+                if (idleSince == 0L) { idleSince = now; if (!suspended) hold.reset(); suspended = false; continue }
                 if (now - idleSince < 700) continue // laisser le drone finir de freiner
                 val g = frames.grab()
                 if (g == null) { d.clearHold(); continue }
@@ -1069,7 +1077,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     "download_media" -> mapOf("result" to downloadMedia(args["videos"] == true))
                     "survey", "pass_door", "search_house", "come_back" -> {
                         val action = when (name) {
-                            "survey" -> mapOf("type" to "survey", "target" to args["target"], "climb_m" to args["climb_m"])
+                            "survey" -> mapOf("type" to "survey", "target" to args["target"], "climb_m" to args["climb_m"], "arc" to args["arc"], "look_down" to args["look_down"], "measure" to args["measure"])
                             "pass_door" -> mapOf("type" to "pass_door", "door" to args["door"])
                             "search_house" -> mapOf("type" to "search_house", "target" to args["target"])
                             else -> mapOf("type" to "come_back")

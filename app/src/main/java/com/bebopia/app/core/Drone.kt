@@ -50,6 +50,12 @@ abstract class DroneBase(val limits: Limits) {
 
     open var flying: Boolean = false
 
+    /** Le cap (compass) vient d'une vraie boussole, fiable pendant une rotation continue. */
+    open val reliableCompass: Boolean get() = false
+
+    /** Rotation sur place en cours (repérage) : le maintien optique garde sa référence pour ramener le drone après le tour. */
+    @Volatile var rotatingInPlace = false
+
     /** Robot roulant (Roomba) : ne vole pas, ne monte pas, ne se déplace pas sur le côté (il tourne puis avance). */
     open val groundRobot: Boolean get() = false
 

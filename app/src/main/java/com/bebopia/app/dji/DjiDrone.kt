@@ -205,6 +205,7 @@ class DjiDrone(
     override fun signalQuality(): Int? = link.signalQuality().takeIf { it >= 0 }
     override fun heightAboveGround(): Double? = link.tofHeight().takeIf { it > 0 }
     override fun positionHoldWeak(): Boolean = link.flying() && !hasGps && link.positionWeak()
+    override val reliableCompass: Boolean get() = true
     override val idleForHold: Boolean get() = !manual && !moving && link.flying() && !homing
 
     @Volatile private var homing = false

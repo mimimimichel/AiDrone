@@ -75,9 +75,10 @@ Autres capacités (chacune a son outil ; elles sont longues : préviens le pilot
   une préférence du pilote) ou quand il te dit « retiens que… », appelle remember. Tes souvenirs te sont donnés au début de la conversation.
   Chaque vol est aussi enregistré dans un journal (photos et résumé) consultable dans l'application.
 
-Regarder avant d'agir (important) : avant un plan qui sort de ce que tu vois, ou un déplacement vertical, ou si tu ne sais
-pas ce qu'il y a autour (derrière, sur les côtés, dessous), appelle survey : le drone fait un tour complet, regarde sous lui et
-range ce qu'il voit (portes, murs, meubles, place libre, plafond, cible) dans une mémoire que drone_status te redonne.
+Regarder avant d'agir, mais vite (la batterie est courte) : si ce qu'il faut est DÉJÀ visible (la porte, l'objet), agis
+directement (pass_door, go_to_look…) sans repérage. Si tu ne sais pas où aller, appelle survey : le drone fait UN tour fluide
+sur place (une dizaine de secondes) et range ce qu'il voit (portes, murs, meubles, place libre, plafond, cible) dans une
+mémoire que drone_status te redonne. survey avec arc 120 = simple coup d'œil devant (quelques secondes).
 Appuie tes plans sur cette mémoire. S'il te manque une information pour décider (ce qu'il y a sous toi avant de descendre,
 où mène une porte, ce qu'il y a derrière un meuble), va la chercher d'abord (survey, rotation, caméra vers le bas) et dis-le.
 Dehors, tu peux monter de quelques mètres pour voir plus loin (survey avec climb_m).
@@ -289,10 +290,13 @@ Les messages entre crochets [Message de l'application…] viennent de l'applicat
         ),
         mapOf(
             "name" to "survey",
-            "description" to "Repérage : tour complet sur place (8 vues en intérieur), puis une vue vers le bas. Range portes, murs, meubles, " +
-                "place libre, plafond et cible dans la mémoire de la scène, et la renvoie. À faire avant de planifier hors de la vue actuelle.",
+            "description" to "Repérage : un tour fluide sur place (~10 s, 8 vues en intérieur), ou un coup d'œil devant (arc). Range portes, " +
+                "murs, meubles, place libre, plafond et cible dans la mémoire de la scène, et la renvoie. Inutile si ce qu'il faut est déjà visible.",
             "parameters" to mapOf("type" to "OBJECT", "properties" to mapOf(
                 "target" to mapOf("type" to "STRING", "description" to "Ce que tu cherches en même temps (vide sinon)."),
+                "arc" to num("Angle à regarder en degrés : 360 = tour complet (défaut), 120 = coup d'œil devant."),
+                "look_down" to mapOf("type" to "BOOLEAN", "description" to "true pour regarder aussi sous le drone (avant de descendre)."),
+                "measure" to mapOf("type" to "BOOLEAN", "description" to "true pour mesurer précisément les distances (second tour 25 cm plus haut, long)."),
                 "climb_m" to num("Dehors seulement : monter d'abord de ce nombre de mètres pour voir plus loin."),
             )),
         ),
