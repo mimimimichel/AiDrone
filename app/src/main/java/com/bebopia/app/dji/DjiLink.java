@@ -153,6 +153,9 @@ public class DjiLink {
     /** Cap du drone (boussole), en degrés de -180 à 180. */
     public double heading() { return heading; }
 
+    /** Hauteur mesurée par le capteur du dessous (m), -1 si non utilisée. */
+    public double tofHeight() { return tofUsed && !tofError ? tofHeight : -1; }
+
     /** Inclinaison de la nacelle (°, négatif = vers le bas). */
     public double gimbalPitchNow() { return gimbalPitchDeg; }
 

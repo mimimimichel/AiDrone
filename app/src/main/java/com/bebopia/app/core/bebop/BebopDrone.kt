@@ -124,7 +124,8 @@ class BebopDrone(
             rt = forward * Math.sin(d) + right * Math.cos(d)
         }
         val f = if (forwardBlocked()) minOf(fw, 0.0) else fw
-        pcmd = intArrayOf(pct(rt, 6.0), pct(f, 6.0), pct(yawRate, 100.0), pct(up, 1.5))
+        val u = if (kotlin.math.abs(up) < 0.05) verticalAssist ?: up else up
+        pcmd = intArrayOf(pct(rt, 6.0), pct(f, 6.0), pct(yawRate, 100.0), pct(u, 1.5))
         pcmdUntil = System.currentTimeMillis() + 300
         setForward(f > 0.2)
         synchronized(this) {

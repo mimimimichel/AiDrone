@@ -199,6 +199,15 @@ abstract class DroneBase(val limits: Limits) {
     /** Cap de vol aux manettes quand il diffère de la caméra (le pilote tourne la tête), sinon null. */
     open fun travelHeading(): Double? = null
 
+    /**
+     * Suivi du relief : vitesse verticale à ajouter quand rien d'autre ne commande la hauteur (m/s), null = désactivé.
+     * Mise à jour par l'application deux fois par seconde.
+     */
+    @Volatile var verticalAssist: Double? = null
+
+    /** Hauteur au-dessus de ce qu'il y a sous le drone, mesurée par un capteur (près du sol seulement), null sinon. */
+    open fun heightAboveGround(): Double? = null
+
     /** Le drone se pilote aux manettes du casque (vitesses continues). */
     open val supportsSticks: Boolean get() = supportsVelocity
 

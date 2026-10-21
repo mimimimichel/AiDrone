@@ -137,6 +137,17 @@ Par défaut (✋ **mode prudent**), l'IA te demande ton accord avant chaque dép
 - **Photos et vidéos récupérées** : après l'atterrissage, les photos du vol sont copiées sur le téléphone, dans le journal (les vidéos aussi si tu l'actives dans ⚙, ou « récupère les vidéos »). Mavic : depuis sa carte SD ; Bebop : par son serveur FTP. Dans le journal, ▶ ouvre une vidéo.
 - **Gestes devant la caméra** (sans Internet) : ✋ paume ou un bras levé = stop ; ✌️ V ou deux bras levés = photo (compte à rebours de 3 s) ; 👍 / 👎 = oui / non à la proposition de l'IA ; bras croisés en X = atterris. Un geste doit être tenu environ une seconde, puis 4 s de pause avant le suivant. Désactivables dans ⚙.
 
+## Plans pro : Spotlight, MasterShots, Hyperlapse, suivi du relief
+
+- **Spotlight** (« spotlight sur moi ») : tu pilotes aux manettes du casque, le drone garde la caméra et le cap verrouillés sur la cible.
+- **MasterShots** (« fais des MasterShots sur la maison ») : orbite, dronie, fusée, révélation enchaînées et filmées sur la carte
+  (versions réduites en intérieur). Après l'atterrissage, l'appli copie la vidéo et monte un petit film (`mastershots-montage.mp4`) dans le journal du vol.
+- **Hyperlapse** (« fais un hyperlapse en orbite ») : avant, orbite, rotation ou libre. Une image par seconde de la vidéo en direct,
+  puis une vidéo accélérée dans le journal du vol.
+- **Suivi du relief** (« garde 15 m au-dessus du sol », ou Réglages) : dehors, avec le GPS. Modèle de terrain IGN (et le capteur de hauteur
+  près du sol) : le drone monte avant la pente. Il s'arrête au plafond d'altitude : monte-le dans les réglages pour les grosses pentes.
+  La hauteur au-dessus du sol s'affiche dans le casque (RELIEF).
+
 ## Regarder avant d'agir, et l'intérieur
 
 - **Repérage** (« regarde autour de toi », ou de lui-même avant un plan) : le drone fait un tour complet sur place (8 vues en intérieur, 6 dehors) puis regarde sous lui. Chaque vue est analysée : portes et passages (ouverts ou fermés, largeur), murs, meubles, obstacles, personnes, place libre dans chaque direction, plafond, hauteur libre dessous, et l'objet cherché. Tout est rangé dans une **mémoire de la scène** que l'IA utilise pour planifier, et qui s'affiche sur la carte du casque (zone verte = place libre, rectangles violets = portes, étoile rouge = cible). S'il lui manque une information (ce qu'il y a dessous, derrière une porte), l'IA va la chercher avant d'agir. Dehors, elle peut monter de quelques mètres pour voir plus loin.

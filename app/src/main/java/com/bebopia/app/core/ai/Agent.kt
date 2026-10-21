@@ -36,13 +36,14 @@ class Agent(
     companion object {
         /** Actions soumises à ton accord en mode validation (atterrir n'en a jamais besoin). */
         val NEEDS_CONFIRM = setOf("takeoff", "hand_launch", "move", "return_home", "tilt_camera", "search", "search_area",
-            "go_look", "follow", "goto_point", "tour", "film", "retrace", "survey", "pass_door", "search_house", "come_back")
+            "go_look", "follow", "goto_point", "tour", "film", "retrace", "survey", "pass_door", "search_house", "come_back",
+            "spotlight", "mastershots", "hyperlapse")
         /** Actions refusées s'il n'y a pas d'image. */
         val NEEDS_IMAGE = setOf("takeoff", "move", "return_home", "search", "search_area", "go_look", "follow", "film", "goto_point", "tour",
-            "survey", "pass_door", "search_house", "come_back")
+            "survey", "pass_door", "search_house", "come_back", "spotlight", "mastershots", "hyperlapse")
         /** Actions longues (affichées dans le casque pendant qu'elles durent). */
         val LONG = setOf("search", "search_area", "go_look", "follow", "goto_point", "tour", "film", "retrace", "return_home",
-            "survey", "pass_door", "search_house", "come_back")
+            "survey", "pass_door", "search_house", "come_back", "spotlight", "mastershots", "hyperlapse")
 
         val STOP_WORDS = setOf("stop", "stoppe", "arrete", "arretes", "arretez", "pause", "halte", "stopper")
         val LAND_PHRASES = listOf("atterri", "pose toi", "pose-toi", "pose le drone")
@@ -89,6 +90,9 @@ class Agent(
             "pass_door" -> "passer « ${action["door"] ?: "la porte"} »"
             "search_house" -> "chercher « ${action["target"] ?: "?"} » dans la maison, pièce par pièce"
             "come_back" -> "revenir à la pièce de départ"
+            "spotlight" -> "Spotlight sur « ${action["target"] ?: "?"} » (tu pilotes, je garde la caméra dessus)"
+            "mastershots" -> "MasterShots (série de plans autour du sujet)"
+            "hyperlapse" -> "hyperlapse « ${action["kind"] ?: "avant"} »"
             else -> t ?: "?"
         }
     }
@@ -154,6 +158,12 @@ class Agent(
 
     /** Plans de cinéma. */
     var shots: Shots? = null
+
+    /** Appelé quand une série MasterShots est filmée (montage à l'atterrissage). */
+    var onMasterShots: (() -> Unit)? = null
+
+    /** Lance un hyperlapse (type, secondes) ; fourni par l'appli (qui enregistre les images). */
+    var hyperlapseRunner: ((String, Double) -> String)? = null
 
     /** Mesure des distances par parallaxe (montée de 25 cm). */
     var ranger: Ranger? = null
@@ -888,6 +898,15 @@ class Agent(
                     follower?.follow(action["target"]?.toString() ?: "", num(action, "minutes").takeIf { it > 0 }, action["classe"]?.toString())
                         ?: "refusé : le suivi a besoin d'une clé Gemini"
                 }
+                "spotlight" -> {
+                    onSnap?.invoke("spotlight " + (action["target"] ?: ""))
+                    follower?.follow(action["target"]?.toString() ?: "", num(action, "minutes").takeIf { it > 0 }, action["classe"]?.toString(), spotlightMode = true)
+                        ?: "refusé : Spotlight a besoin d'une clé Gemini"
+                }
+                "mastershots" -> shots?.masterShots(num(action, "distance_m").takeIf { it > 0 })?.also { if (!it.startsWith("refusé")) onMasterShots?.invoke() }
+                    ?: "refusé : plans de cinéma indisponibles"
+                "hyperlapse" -> hyperlapseRunner?.invoke(action["kind"]?.toString() ?: "avant", num(action, "seconds").takeIf { it > 0 }?.coerceIn(10.0, 300.0) ?: 60.0)
+                    ?: "refusé : hyperlapse indisponible"
                 "film" -> shots?.film(action["shot"]?.toString() ?: "", num(action, "distance_m").takeIf { it > 0 }, action["record"] != false)
                     ?: "refusé : plans de cinéma indisponibles"
                 "done" -> {

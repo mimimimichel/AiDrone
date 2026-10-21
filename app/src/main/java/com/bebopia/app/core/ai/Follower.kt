@@ -63,6 +63,18 @@ class Follower(
     @Volatile var target: String? = null
         private set
 
+    /** Spotlight : le pilote déplace le drone, l'application garde la caméra braquée sur la cible. */
+    @Volatile var spotlight = false
+        private set
+    @Volatile private var pilotIn = DoubleArray(3)
+    @Volatile private var pilotAt = 0L
+
+    /** Spotlight : déplacement voulu par le pilote (manettes), m/s dans le repère du drone. */
+    fun pilot(forward: Double, right: Double, up: Double) {
+        pilotIn = doubleArrayOf(forward, right, up)
+        pilotAt = System.currentTimeMillis()
+    }
+
     /** Boîte suivie (pour l'affichage dans le casque), et si l'IA vient de la confirmer. */
     val box: Box? get() = if (target != null) tracker.box else null
     @Volatile var confirmedAt = 0L
@@ -70,10 +82,12 @@ class Follower(
 
     private val vfovDeg get() = hfovDeg * 9 / 16
 
-    fun follow(targetName: String, minutes: Double?, hint: String? = null): String {
+    fun follow(targetName: String, minutes: Double?, hint: String? = null, spotlightMode: Boolean = false): String {
         if (!drone.flying) return "refusé : le drone est au sol, décolle d'abord"
         val t = targetName.trim().ifEmpty { return "refusé : cible non précisée" }
+        if (spotlightMode && !drone.supportsSticks) return "refusé : Spotlight a besoin d'un drone pilotable en continu (Mavic ou Bebop)"
         target = t
+        spotlight = spotlightMode
         classes = if (fast != null && frames != null) CocoClasses.forTarget(t, hint) else null
         tracker.reset()
         val end = System.currentTimeMillis() + ((minutes ?: MAX_MINUTES.toDouble()).coerceIn(0.5, MAX_MINUTES.toDouble()) * 60_000).toLong()
@@ -81,6 +95,7 @@ class Follower(
             report("🎯 Je cherche « $t » pour la suivre (dis « stop » pour arrêter)")
             val first = acquire(t) ?: return "pas trouvé « $t » autour de moi : suivi annulé"
             val refSize = sizeOf(first).coerceIn(0.08, 0.5)
+            if (spotlight) report("🔦 Spotlight sur « $t » : pilote aux manettes, je garde la caméra sur la cible") else
             report("🎯 Je suis « $t » : le téléphone la suit sur la vidéo" +
                 (if (classes != null) " et la reconnaît (${classes!!.first()})" else "") + ", l'IA vérifie toutes les 3 s")
             onSeen(t)
@@ -90,6 +105,7 @@ class Follower(
         } finally {
             drone.stopVelocity()
             target = null
+            spotlight = false
             tracker.reset()
             Marks.clear("follow")
         }
@@ -254,7 +270,12 @@ class Follower(
             lastSide = if (offDeg >= 0) 1.0 else -1.0
             val err = (refSize - sizeOf(b)) / refSize // > 0 : trop loin
             val outside = drone.distanceFromHome() > drone.limits.maxDistanceM - 2
-            if (drone.supportsVelocity) {
+            if (spotlight) {
+                // Spotlight : le pilote choisit la trajectoire, la rotation garde la cible au centre
+                val pin = if (System.currentTimeMillis() - pilotAt < 300) pilotIn else DoubleArray(3)
+                val yaw = if (abs(offDeg) < 2) 0.0 else (offDeg * 1.2).coerceIn(-45.0, 45.0)
+                drone.sticks(pin[0], pin[1], pin[2], yaw)
+            } else if (drone.supportsVelocity) {
                 val vmax = if (drone.hasGps) MAX_SPEED else INDOOR_SPEED
                 var f = if (abs(err) < 0.12) 0.0 else (err * vmax * 1.5).coerceIn(-vmax * 0.6, vmax)
                 if (outside && f > 0) f = 0.0

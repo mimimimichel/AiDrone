@@ -757,6 +757,7 @@ function drawOSD(){
   if(s.rec||tel.rec){o.fillStyle=DNG;o.beginPath();o.arc(w-212,190,8,0,Math.PI*2);o.fill();tx('REC',w-110,197,18,DNG,'right',700,3);}
   if(s.preflight)tx({ok:'ZONE · MÉTÉO OK',prudence:'ZONE · MÉTÉO : PRUDENCE',non:'ZONE · MÉTÉO : NON'}[s.preflight]||'',w-110,232,15,{ok:ACC,prudence:AMB,non:DNG}[s.preflight]||ICE,'right',700,3);
   if(s.gesture)tx('GESTE  '+s.gesture,cx,ty+152,22,AMB,'center',700,3);
+  if(s.terrain!=null&&s.terrain!==undefined)tx(s.terrain<0?'RELIEF  ··':'RELIEF  '+Math.round(s.terrain)+' M',w-110,262,15,ACC,'right',700,3);
 
   // ---- Centre : réticule circulaire, échelle d'assiette ----
   const pitch=num(tel.pitch,0), roll=num(tel.roll,0), R=190, ppd=7;

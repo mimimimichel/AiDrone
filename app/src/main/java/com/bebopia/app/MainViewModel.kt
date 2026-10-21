@@ -113,6 +113,8 @@ data class UiState(
     val preflightText: String? = null,
     val gesturesOn: Boolean = true,
     val mediaVideos: Boolean = false,
+    val terrainOn: Boolean = false,
+    val terrainAgl: Double? = null,
     /** Geste reconnu (ou en cours), pour l'affichage. */
     val gesture: String? = null,
 )
@@ -271,6 +273,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     init {
         startDisplayGain()
         startNavTicks()
+        startTerrainLoop()
         startTargetPreview()
         startGestures()
         voice.init()
@@ -358,6 +361,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             preflightText = lastPreflight?.text,
             gesturesOn = gesturesOn,
             mediaVideos = mediaVideos,
+            terrainOn = terrainTarget != null,
+            terrainAgl = terrainAgl,
             gesture = gestureLabel(),
         )
     }
@@ -437,6 +442,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         scene = sc
         a.onLine = { role, text -> log.line(role, text) }
         a.onSnap = { label -> thread(isDaemon = true) { log.snap(label) } }
+        a.onMasterShots = { masterShotsPending = true }
+        a.hyperlapseRunner = { k, sec -> runHyperlapse(k, sec) }
         flightLog = log
     }
 
@@ -463,7 +470,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (d.flying && !wasFlyingTick) scene?.clear()
                 if (!d.flying && wasFlyingTick) thread(isDaemon = true) {
                     Thread.sleep(8000) // le journal se ferme, le drone se pose bien
-                    if (drone === d && !d.flying) downloadMedia(mediaVideos)
+                    if (drone === d && !d.flying) {
+                        val montage = masterShotsPending
+                        downloadMedia(mediaVideos || montage)
+                        if (montage) { masterShotsPending = false; flightLog?.currentDir?.let { montageMasterShots(it) } }
+                    }
                 }
                 // Dehors : vérification de la zone et de la météo, une fois par connexion
                 if (!d.indoor && !preflightTried && mode != Mode.SIM) {
@@ -920,6 +931,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         mapOf("result" to r, "etat" to d.state())
                     }
                     "can_i_fly" -> mapOf("result" to runPreflight().text)
+                    "terrain_follow" -> mapOf("result" to setTerrainFollow(args["on"] != false, (args["height_m"] as? Number)?.toDouble()))
+                    "spotlight", "master_shots", "hyperlapse" -> {
+                        val action = when (name) {
+                            "spotlight" -> mapOf("type" to "spotlight", "target" to args["target"], "minutes" to args["minutes"])
+                            "master_shots" -> mapOf("type" to "mastershots", "distance_m" to args["distance_m"])
+                            else -> mapOf("type" to "hyperlapse", "kind" to args["kind"], "seconds" to args["seconds"])
+                        }
+                        val r = a.aiAction(action)
+                        live?.sendFrameNow()
+                        mapOf("result" to r, "etat" to d.state())
+                    }
                     "take_photo" -> mapOf("result" to photoNow())
                     "camera_settings" -> {
                         val ev = (args["exposure_ev"] as? Number)?.toDouble()
@@ -1241,6 +1263,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .put("sticks", questActive)
             .put("headPaused", d?.headPaused == true)
             .put("preflight", clean(s.preflightVerdict))
+            .put("terrain", if (s.terrainOn) (s.terrainAgl ?: -1.0) else null)
             .put("gesture", clean(s.gesture))
             .put("sticksMode", if (sticksFollowLook) "regard" else "libre")
             .put("indoor", s.indoor)
@@ -1288,6 +1311,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         questLastActive = now
+        // Spotlight : le pilote déplace le drone, le suivi garde la caméra sur la cible (pas de reprise en main)
+        val fol = agent?.follower
+        if (fol != null && fol.spotlight && d.flying) {
+            val vh = if (d.indoor) 0.5 else if (d.hasGps) 4.0 else 1.0
+            fol.pilot(-expo(ry) * vh, expo(rx) * vh, -expo(ly) * (if (d.indoor) 0.4 else 1.5))
+            return
+        }
         if (!d.supportsSticks) {
             if (!questActive) sysMessage("🎮 Pilotage aux manettes indisponible avec ce drone (simulation).")
             questActive = true
@@ -1394,6 +1424,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private set(v) = prefs.edit().putBoolean("media_videos", v).apply()
     fun changeGestures(on: Boolean) { gesturesOn = on; refresh() }
     fun changeMediaVideos(on: Boolean) { mediaVideos = on; refresh() }
+    fun changeTerrainFollow(on: Boolean) { thread(isDaemon = true) { setTerrainFollow(on, null).let { if (!it.startsWith("suivi")) sysMessage("⛰ $it") } } }
 
     private val gestureWatcher by lazy { com.bebopia.app.android.GestureWatcher(getApplication()) }
     private val gestures = com.bebopia.app.core.vision.GestureInterpreter()
@@ -1450,6 +1481,124 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val msg = if (r == null) "📸 Photo prise" else "📸 Photo enregistrée dans le journal (sur le drone : $r)"
         sysMessage(msg)
         return msg
+    }
+
+    // ---- suivi du relief ---------------------------------------------------------------------------
+    private val terrain = com.bebopia.app.core.ai.Terrain { url ->
+        val c = router.openApi(java.net.URL(url))
+        try {
+            c.connectTimeout = 8_000; c.readTimeout = 10_000
+            c.setRequestProperty("User-Agent", "BebopIA")
+            c.inputStream.bufferedReader().use { it.readText() }
+        } finally { c.disconnect() }
+    }
+    /** Hauteur voulue au-dessus du sol (m), null = suivi du relief arrêté. */
+    @Volatile private var terrainTarget: Double? = null
+    /** Hauteur actuelle au-dessus du sol (m), estimée. */
+    @Volatile private var terrainAgl: Double? = null
+    @Volatile private var groundAtHome: Double? = null
+    @Volatile private var terrainWarned = 0L
+    @Volatile private var masterShotsPending = false
+
+    fun setTerrainFollow(on: Boolean, heightM: Double?): String {
+        val d = drone ?: return "pas de drone"
+        if (!on) {
+            terrainTarget = null; d.verticalAssist = null; terrainAgl = null
+            sysMessage("⛰ Suivi du relief arrêté")
+            refresh()
+            return "suivi du relief arrêté"
+        }
+        if (d.indoor) return "refusé : le suivi du relief, c'est dehors (en intérieur le drone garde déjà sa hauteur au capteur)"
+        val home = d.homeGps() ?: d.gps() ?: return "refusé : il faut le GPS pour suivre le relief"
+        val g0 = terrain.elevations(listOf(home))?.firstOrNull() ?: return "échec : modèle de terrain injoignable (réseau ?)"
+        groundAtHome = g0
+        val here = d.gps()
+        val gHere = here?.let { terrain.elevations(listOf(it))?.firstOrNull() }
+        val cur = if (gHere != null) d.altitude() + g0 - gHere else d.altitude()
+        val target = (heightM ?: cur).coerceIn(3.0, limits.maxAltitudeM)
+        terrainTarget = target
+        sysMessage("⛰ Suivi du relief : je garde %.0f m au-dessus du sol (plafond %.0f m au-dessus du décollage)".format(target, limits.maxAltitudeM))
+        refresh()
+        return "suivi du relief actif à %.0f m du sol".format(target)
+    }
+
+    /** Deux fois par seconde : vitesse verticale pour garder la hauteur au-dessus du sol. */
+    private fun startTerrainLoop() {
+        viewModelScope.launch(Dispatchers.IO) {
+            var last: Pair<Double, Double>? = null
+            while (isActive) {
+                delay(500)
+                val d = drone
+                val target = terrainTarget
+                if (d == null || target == null || !d.flying || d.indoor) {
+                    d?.verticalAssist = null; last = null
+                    if (d != null && target != null && !d.flying && d.indoor) terrainTarget = null
+                    continue
+                }
+                val g = d.gps()
+                if (g == null) { d.verticalAssist = null; continue }
+                val p = d.positionNE()
+                val course = last?.let { l ->
+                    val dn = p.first - l.first; val de = p.second - l.second
+                    if (kotlin.math.hypot(dn, de) > 0.4) Math.toDegrees(kotlin.math.atan2(de, dn)) else null
+                }
+                last = p
+                val g0 = groundAtHome ?: continue
+                val alt = d.altitude()
+                var v = runCatching { terrain.verticalSpeed(g.first, g.second, course, alt, g0, target, d.heightAboveGround()) }.getOrNull()
+                val gHere = terrain.elevations(listOf(g))?.firstOrNull()
+                terrainAgl = d.heightAboveGround()?.takeIf { it < 8 } ?: gHere?.let { alt + g0 - it }
+                if (v != null && v > 0 && alt >= limits.maxAltitudeM - 0.5) {
+                    v = 0.0
+                    if (System.currentTimeMillis() - terrainWarned > 20_000) {
+                        terrainWarned = System.currentTimeMillis()
+                        sysMessage("⛰ Le relief monte mais j'atteins le plafond (%.0f m au-dessus du décollage) : monte le plafond dans les réglages ou fais demi-tour".format(limits.maxAltitudeM))
+                    }
+                }
+                d.verticalAssist = v
+            }
+        }
+    }
+
+    // ---- hyperlapse et MasterShots -------------------------------------------------------------------
+    /** Hyperlapse : une image par seconde de la vidéo en direct, puis vidéo accélérée (30 i/s) dans le journal du vol. Bloquant. */
+    private fun runHyperlapse(kind: String, seconds: Double): String {
+        val sh = agent?.shots ?: return "refusé : plans indisponibles"
+        val dir = flightLog?.currentDir ?: return "refusé : journal du vol indisponible"
+        val file = java.io.File(dir, "hyperlapse-${System.currentTimeMillis() / 1000}.mp4")
+        val video = runCatching { com.bebopia.app.android.FrameVideo(file) }.getOrElse { return "échec : encodeur vidéo (${it.message})" }
+        val main = android.os.Handler(android.os.Looper.getMainLooper())
+        sysMessage("⏩ Hyperlapse « $kind » : %.0f s de prise de vue, une image par seconde".format(seconds))
+        val r = runCatching {
+            sh.hyperlapse(kind, seconds, 1000) {
+                val latch = java.util.concurrent.CountDownLatch(1)
+                var bmp: android.graphics.Bitmap? = null
+                main.post { bmp = runCatching { textureView?.takeIf { it.isAvailable }?.getBitmap(1280, 720) }.getOrNull(); latch.countDown() }
+                latch.await(800, java.util.concurrent.TimeUnit.MILLISECONDS)
+                bmp?.let { b -> runCatching { video.add(b) }; b.recycle() }
+            }
+        }.getOrElse { "interrompu : ${it.message}" }
+        val out = video.finish()
+        return if (out == null) "$r ; pas assez d'images pour une vidéo"
+        else "$r ; hyperlapse enregistré (${video.count} images, %.1f s de vidéo) dans le journal du vol".format(video.count / 30.0).also { sysMessage("⏩ $it") }
+    }
+
+    /** Après la copie de la vidéo : un petit film avec le milieu de chaque plan MasterShots. Bloquant. */
+    private fun montageMasterShots(dir: java.io.File) {
+        val segs = agent?.shots?.lastSegments.orEmpty()
+        if (segs.isEmpty()) return
+        val src = dir.listFiles()?.filter {
+            it.name.endsWith(".mp4", true) && !it.name.startsWith("hyperlapse") && !it.name.startsWith("mastershots")
+        }?.maxByOrNull { it.length() }
+        if (src == null) { sysMessage("🎬 Montage MasterShots : vidéo du drone introuvable (copie des vidéos ratée ?)"); return }
+        val clips = segs.map { s ->
+            val mid = (s.startS + s.endS) / 2
+            val half = minOf(2.5, (s.endS - s.startS) / 2)
+            (mid - half).coerceAtLeast(0.0) to (mid + half)
+        }.filter { it.second - it.first > 0.8 }
+        sysMessage("🎬 Montage MasterShots en cours (${clips.size} plans)…")
+        val err = com.bebopia.app.android.Montage.make(getApplication(), src, clips, java.io.File(dir, "mastershots-montage.mp4"))
+        sysMessage(if (err == null) "🎬 Montage MasterShots prêt dans le journal du vol" else "🎬 Montage MasterShots raté : $err")
     }
 
     /** Copie des photos (et vidéos) du vol sur le téléphone, dans le journal. Bloquant. */

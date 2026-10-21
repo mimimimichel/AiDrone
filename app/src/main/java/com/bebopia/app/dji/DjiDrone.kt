@@ -198,6 +198,7 @@ class DjiDrone(
     }
 
     override fun signalQuality(): Int? = link.signalQuality().takeIf { it >= 0 }
+    override fun heightAboveGround(): Double? = link.tofHeight().takeIf { it > 0 }
 
     @Volatile private var homing = false
 
@@ -325,7 +326,8 @@ class DjiDrone(
                 continue
             }
             val v = vel
-            link.sendSticks(v[1].toFloat(), v[0].toFloat(), v[3].toFloat(), v[2].toFloat())
+            val up = if (abs(v[2]) < 0.05) verticalAssist ?: v[2] else v[2]
+            link.sendSticks(v[1].toFloat(), v[0].toFloat(), v[3].toFloat(), up.toFloat())
             syncHeading()
             integrate(v[0], v[1], v[2], v[3], dt)
         }
@@ -415,7 +417,8 @@ class DjiDrone(
             val bf = vf * kotlin.math.cos(d) - vr * kotlin.math.sin(d)
             val br = vf * kotlin.math.sin(d) + vr * kotlin.math.cos(d)
             val yr = if (follow) followRate(droneYawCenter!!).toFloat() else vy
-            link.sendSticks(br.toFloat(), bf.toFloat(), yr, vu)
+            val up = if (abs(vu) < 0.05) (verticalAssist?.toFloat() ?: vu) else vu
+            link.sendSticks(br.toFloat(), bf.toFloat(), yr, up)
             Thread.sleep(100)
         }
         // Freinage : vitesses nulles pendant une seconde

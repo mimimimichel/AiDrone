@@ -67,6 +67,9 @@ Autres capacités (chacune a son outil ; elles sont longues : préviens le pilot
 - Plans de cinéma, filmés sur la carte du drone : film_shot. « Fais une orbite autour de la maison » (orbite), « fais un dronie » (recule en
   montant), « un panorama », « une révélation » (caméra qui se relève en avançant), « une fusée » (monte caméra vers le sol).
   Pour une orbite, mets d'abord le sujet au centre de l'image. Pour « fais un beau plan de… », choisis le plan qui convient et dis lequel.
+- « Spotlight sur moi » / « garde la caméra sur lui pendant que je pilote » : spotlight. « Fais des MasterShots », « filme-moi
+  plusieurs plans » : master_shots (le sujet au centre de l'image). « Fais un hyperlapse » : hyperlapse (demande le type s'il n'est pas clair).
+  « Suis le relief », « garde 15 m au-dessus du sol » : terrain_follow (dehors seulement).
 - « Rentre par le même chemin » : retrace_path. L'application le fait aussi toute seule si la batterie ou le signal radio baissent.
 - Ta mémoire : quand tu apprends quelque chose d'utile pour les prochains vols (où se trouve un objet, un obstacle du lieu,
   une préférence du pilote) ou quand il te dit « retiens que… », appelle remember. Tes souvenirs te sont donnés au début de la conversation.
@@ -306,6 +309,40 @@ Les messages entre crochets [Message de l'application…] viennent de l'applicat
         mapOf(
             "name" to "come_back",
             "description" to "Après search_house : revient à la pièce de départ en repassant les portes dans l'ordre inverse.",
+        ),
+        mapOf(
+            "name" to "spotlight",
+            "description" to "Spotlight : la personne pilote aux manettes (casque ou téléphone), le drone garde la caméra et le cap verrouillés sur la cible.",
+            "parameters" to mapOf("type" to "OBJECT", "properties" to mapOf(
+                "target" to mapOf("type" to "STRING", "description" to "La cible, précise (ex. « la personne en veste rouge »)."),
+                "minutes" to num("Durée maximale en minutes (vide = 5)."),
+            ), "required" to listOf("target")),
+        ),
+        mapOf(
+            "name" to "master_shots",
+            "description" to "MasterShots : série automatique de plans autour du sujet au centre de l'image (orbite, dronie, révélation, montée…), " +
+                "filmée sur la carte. Après l'atterrissage, l'appli copie la vidéo et monte un petit film des meilleurs moments.",
+            "parameters" to mapOf("type" to "OBJECT", "properties" to mapOf(
+                "distance_m" to num("Distance au sujet en mètres (vide = estimée)."),
+            )),
+        ),
+        mapOf(
+            "name" to "hyperlapse",
+            "description" to "Hyperlapse : le drone se déplace lentement (ou tourne) et l'appli enregistre une image par seconde, " +
+                "puis fabrique une vidéo accélérée rangée dans le journal du vol.",
+            "parameters" to mapOf("type" to "OBJECT", "properties" to mapOf(
+                "kind" to mapOf("type" to "STRING", "enum" to listOf("avant", "orbite", "rotation", "libre"),
+                    "description" to "avant = avance tout droit ; orbite = tourne autour du sujet ; rotation = pivote sur place ; libre = la personne pilote."),
+                "seconds" to num("Durée de prise de vue en secondes (10 à 300, défaut 60)."),
+            )),
+        ),
+        mapOf(
+            "name" to "terrain_follow",
+            "description" to "Suivi du relief (dehors) : garde une hauteur constante au-dessus du sol (modèle de terrain IGN + capteur de hauteur).",
+            "parameters" to mapOf("type" to "OBJECT", "properties" to mapOf(
+                "on" to mapOf("type" to "BOOLEAN", "description" to "true pour activer, false pour arrêter."),
+                "height_m" to num("Hauteur voulue au-dessus du sol en mètres (vide = hauteur actuelle)."),
+            ), "required" to listOf("on")),
         ),
         mapOf(
             "name" to "can_i_fly",
